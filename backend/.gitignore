@@ -1,15 +1,27 @@
-# Dependencies
+# Node modules
 node_modules/
-*.log
 
 # Environment variables
 .env
 .env.local
 .env.*.local
 
-# Build output
-dist/
-build/
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
@@ -18,6 +30,6 @@ build/
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
+# Build
+dist/
+build/
