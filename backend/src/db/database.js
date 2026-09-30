@@ -1,148 +1,196 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 require('dotenv').config();
 
-const dbPath = path.resolve(process.env.DB_PATH || './datatasker.db');
+/**
+ * Convert SQLite-style ? placeholders to PostgreSQL $1, $2, $3...
+ *
+ * This allows the existing service/repository code to continue using:
+ *
+ *   SELECT * FROM projects WHERE id = ?
+ *
+ * instead of immediately rewriting every query to:
+ *
+ *   SELECT * FROM projects WHERE id = $1
+ */
+function convertPlaceholders(sql) {
+  let index = 0;
+
+  return sql.replace(/\?/g, () => {
+    index += 1;
+    return `$${index}`;
+  });
+}
 
 class Database {
   constructor() {
-    this.db = null;
+    this.pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+
+      // Supabase PostgreSQL connections use SSL.
+      ssl: {
+        rejectUnauthorized: false,
+      },
+
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+
+    this.pool.on('error', (err) => {
+      console.error('Unexpected PostgreSQL pool error:', err);
+    });
   }
 
   /**
-   * Initialize database connection and create tables
+   * Initialize PostgreSQL connection and create tables.
    */
   async initialize() {
-    return new Promise((resolve, reject) => {
-      this.db = new sqlite3.Database(dbPath, (err) => {
-        if (err) {
-          console.error('Error opening database:', err.message);
-          reject(err);
-        } else {
-          console.log(`Connected to SQLite database at ${dbPath}`);
-          this.createTables()
-            .then(() => resolve())
-            .catch(reject);
-        }
-      });
-    });
+    let client;
+
+    try {
+      client = await this.pool.connect();
+
+      console.log('Connected to Supabase PostgreSQL database');
+
+      await this.createTables();
+
+      console.log('Database initialized successfully');
+    } catch (error) {
+      console.error(
+        'Error initializing PostgreSQL database:',
+        error.message
+      );
+
+      throw error;
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
   }
 
   /**
-   * Create database tables with proper schema
+   * Create database tables and indexes.
    */
   async createTables() {
-    // Enable foreign keys
-    await this.run('PRAGMA foreign_keys = ON');
-
-    // Create projects table
-    await this.run(`
+    // Projects table
+    await this.pool.query(`
       CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        created_at TEXT NOT NULL
+        id UUID PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description VARCHAR(1000),
+        created_at TIMESTAMPTZ NOT NULL
       )
     `);
 
-    // Create tasks table with foreign key to projects
-    await this.run(`
+    // Tasks table
+    await this.pool.query(`
       CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        title TEXT NOT NULL,
+        id UUID PRIMARY KEY,
+        project_id UUID NOT NULL,
+        title VARCHAR(255) NOT NULL,
         description TEXT,
-        status TEXT NOT NULL CHECK(status IN ('todo', 'in-progress', 'done')),
-        priority TEXT NOT NULL CHECK(priority IN ('low', 'medium', 'high')),
-        due_date TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        status VARCHAR(20) NOT NULL
+          CHECK (status IN ('todo', 'in-progress', 'done')),
+        priority VARCHAR(20) NOT NULL
+          CHECK (priority IN ('low', 'medium', 'high')),
+        due_date TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL,
+
+        CONSTRAINT fk_tasks_project
+          FOREIGN KEY (project_id)
+          REFERENCES projects(id)
+          ON DELETE CASCADE
       )
     `);
 
-    // Create indexes for better query performance
-    await this.run(`
-      CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id)
+    // Indexes for task filtering and sorting
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_project_id
+      ON tasks(project_id)
     `);
 
-    await this.run(`
-      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_status
+      ON tasks(status)
     `);
 
-    await this.run(`
-      CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority)
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_priority
+      ON tasks(priority)
     `);
 
-    console.log('Database tables created successfully');
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_due_date
+      ON tasks(due_date)
+    `);
+
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_tasks_created_at
+      ON tasks(created_at)
+    `);
+
+    console.log('PostgreSQL tables and indexes ready');
   }
 
   /**
-   * Run a SQL query (for INSERT, UPDATE, DELETE)
+   * Run INSERT, UPDATE or DELETE queries.
+   *
+   * Keeps the old database.run(sql, params) interface
+   * so existing backend code can continue working.
    */
-  run(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.run(sql, params, function (err) {
-        if (err) {
-          reject(err);
-        } else {
-          resolve({ lastID: this.lastID, changes: this.changes });
-        }
-      });
-    });
+  async run(sql, params = []) {
+    const postgresSql = convertPlaceholders(sql);
+
+    const result = await this.pool.query(postgresSql, params);
+
+    return {
+      lastID: null,
+      changes: result.rowCount,
+    };
   }
 
   /**
-   * Get a single row
+   * Get a single row.
    */
-  get(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.get(sql, params, (err, row) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(row);
-        }
-      });
-    });
+  async get(sql, params = []) {
+    const postgresSql = convertPlaceholders(sql);
+
+    const result = await this.pool.query(postgresSql, params);
+
+    return result.rows[0];
   }
 
   /**
-   * Get all matching rows
+   * Get all matching rows.
    */
-  all(sql, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.all(sql, params, (err, rows) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(rows);
-        }
-      });
-    });
+  async all(sql, params = []) {
+    const postgresSql = convertPlaceholders(sql);
+
+    const result = await this.pool.query(postgresSql, params);
+
+    return result.rows;
   }
 
   /**
-   * Close database connection
+   * Close PostgreSQL connection pool.
    */
-  close() {
-    return new Promise((resolve, reject) => {
-      if (this.db) {
-        this.db.close((err) => {
-          if (err) {
-            reject(err);
-          } else {
-            console.log('Database connection closed');
-            resolve();
-          }
-        });
-      } else {
-        resolve();
-      }
-    });
+  async close() {
+    try {
+      await this.pool.end();
+      console.log('PostgreSQL connection pool closed');
+    } catch (error) {
+      console.error(
+        'Error closing PostgreSQL connection:',
+        error.message
+      );
+
+      throw error;
+    }
   }
 }
 
-// Create singleton instance
+// Singleton database instance
 const database = new Database();
 
 module.exports = database;
