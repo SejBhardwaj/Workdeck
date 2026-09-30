@@ -9,12 +9,6 @@ import type {
 export interface TasksResponse {
   success: boolean;
   data: Task[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
 }
 
 export interface TaskResponse {
@@ -29,10 +23,8 @@ export interface DeleteTaskResponse {
 
 export interface GetTasksParams {
   status?: "todo" | "in-progress" | "done";
-  sort_by?: "due_date" | "created_at" | "priority";
-  order?: "asc" | "desc";
-  page?: number;
-  limit?: number;
+  sortBy?: "due_date" | "created_at" | "priority";
+  sortOrder?: "asc" | "desc";
 }
 
 export async function getTasks(
@@ -45,20 +37,18 @@ export async function getTasks(
     query.set("status", params.status);
   }
 
-  if (params.sort_by) {
-    query.set("sort_by", params.sort_by);
+  if (params.sortBy) {
+    query.set("sortBy", params.sortBy);
   }
 
-  if (params.order) {
-    query.set("order", params.order);
+  if (params.sortOrder) {
+    query.set("sortOrder", params.sortOrder);
   }
 
-  query.set("page", String(params.page ?? 1));
-  query.set("limit", String(params.limit ?? 10));
-
-  return apiClient.get<TasksResponse>(
-    `/projects/${encodeURIComponent(projectId)}/tasks?${query.toString()}`
-  );
+  const queryString = query.toString();
+  const url = `/projects/${encodeURIComponent(projectId)}/tasks${queryString ? `?${queryString}` : ''}`;
+  
+  return apiClient.get<TasksResponse>(url);
 }
 
 export async function createTask(

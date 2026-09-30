@@ -7,12 +7,6 @@ import type {
 export interface ProjectsResponse {
   success: boolean;
   data: Project[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
 }
 
 export interface ProjectResponse {
@@ -26,24 +20,13 @@ export interface DeleteProjectResponse {
 }
 
 export interface GetProjectsParams {
-  page?: number;
-  limit?: number;
+  // Future: Add filtering/sorting params here
 }
 
 export async function getProjects(
   params: GetProjectsParams = {}
 ): Promise<ProjectsResponse> {
-  const page = params.page ?? 1;
-  const limit = params.limit ?? 10;
-
-  const query = new URLSearchParams({
-    page: String(page),
-    limit: String(limit),
-  });
-
-  return apiClient.get<ProjectsResponse>(
-    `/projects?${query.toString()}`
-  );
+  return apiClient.get<ProjectsResponse>('/projects');
 }
 
 export async function getProject(

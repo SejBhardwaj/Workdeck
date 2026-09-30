@@ -12,6 +12,8 @@ import {
 // Import new types and data
 import { Project, Task, TaskStatus, TaskPriority } from '@/types';
 import { mockProjects, mockTasks } from '@/lib/mock';
+import { getProjects, getProject } from '@/lib/api/projects';
+import { getTasks, createTask } from '@/lib/api/tasks';
 import {
   enrichProjectsWithStats,
   getProjectById,
@@ -54,6 +56,13 @@ export function DataTaskerApp() {
   const [notifications, setNotifications] = useState(false);
   const [modal, setModal] = useState<'project' | 'task' | null>(null);
   const [toast, setToast] = useState('');
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [taskRefreshTrigger, setTaskRefreshTrigger] = useState(0);
+  
+  // API state for projects
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
   
   const isDetail = pathname.startsWith('/projects/') && pathname !== '/projects';
   const page = isDetail
@@ -63,11 +72,43 @@ export function DataTaskerApp() {
     : pathname.slice(1).replace('-', ' ');
 
   // Get canonical data
-  const projects = mockProjects;
   const tasks = mockTasks;
 
   // Enrich projects with stats for UI display
   const projectsWithStats = enrichProjectsWithStats(projects, tasks);
+
+  // Fetch projects from API
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchProjects() {
+      try {
+        setProjectsLoading(true);
+        setProjectsError(null);
+        const response = await getProjects();
+        
+        if (mounted && response.success) {
+          setProjects(response.data);
+        }
+      } catch (error) {
+        if (mounted) {
+          setProjectsError(
+            error instanceof Error ? error.message : 'Failed to load projects'
+          );
+        }
+      } finally {
+        if (mounted) {
+          setProjectsLoading(false);
+        }
+      }
+    }
+
+    fetchProjects();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -269,11 +310,44 @@ export function DataTaskerApp() {
         {/* Page Content */}
         <div className="mx-auto max-w-[1500px] px-5 py-8 sm:px-8 lg:px-10">
           {isDetail ? (
-            <ProjectDetail projects={projects} tasks={tasks} onToast={setToast} onAddTask={() => setModal('task')} />
+            <ProjectDetail 
+              onToast={setToast} 
+              onAddTask={() => {
+                const projectId = pathname.split('/projects/')[1];
+                setCurrentProjectId(projectId);
+                setModal('task');
+              }}
+              refreshTrigger={taskRefreshTrigger}
+            />
           ) : pathname === '/' ? (
             <Dashboard projects={projects} tasks={tasks} onCreate={() => setModal('project')} />
           ) : pathname === '/projects' ? (
-            <Projects projects={projects} tasks={tasks} onCreate={() => setModal('project')} onToast={setToast} />
+            <Projects 
+              projects={projects} 
+              tasks={tasks} 
+              onCreate={() => setModal('project')} 
+              onToast={setToast}
+              loading={projectsLoading}
+              error={projectsError}
+              onRetry={() => {
+                setProjectsLoading(true);
+                setProjectsError(null);
+                getProjects()
+                  .then(response => {
+                    if (response.success) {
+                      setProjects(response.data);
+                    }
+                  })
+                  .catch(err => {
+                    setProjectsError(
+                      err instanceof Error ? err.message : 'Failed to load projects'
+                    );
+                  })
+                  .finally(() => {
+                    setProjectsLoading(false);
+                  });
+              }}
+            />
           ) : pathname === '/tasks' ? (
             <TasksPage projects={projects} tasks={tasks} onCreate={() => setModal('task')} onToast={setToast} />
           ) : pathname === '/analytics' ? (
@@ -300,10 +374,14 @@ export function DataTaskerApp() {
       {modal && (
         <FormModal
           kind={modal}
+          projectId={modal === 'task' ? currentProjectId : null}
           onClose={() => setModal(null)}
-          onSave={() => {
+          onSuccess={() => {
             setModal(null);
             setToast(`${modal === 'project' ? 'Project' : 'Task'} created successfully.`);
+            if (modal === 'task') {
+              setTaskRefreshTrigger(prev => prev + 1);
+            }
           }}
         />
       )}
@@ -716,11 +794,17 @@ function Projects({
   tasks,
   onCreate,
   onToast,
+  loading,
+  error,
+  onRetry,
 }: {
   projects: Project[];
   tasks: Task[];
   onCreate: () => void;
   onToast: (text: string) => void;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }) {
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [search, setSearch] = useState('');
@@ -766,44 +850,150 @@ function Projects({
           </button>
         </div>
       </div>
-      {view === 'grid' ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {shown.map((p, index) => (
-            <ProjectCard key={p.id} project={p} index={index} onToast={onToast} />
-          ))}
-        </div>
-      ) : (
-        <Surface className="overflow-hidden p-0">
-          <div className="hidden grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] gap-4 border-b border-[#292b2d] px-5 py-4 text-[10px] uppercase tracking-widest text-[#6f716f] md:grid">
-            <span>Project</span>
-            <span>Tasks</span>
-            <span>Progress</span>
-            <span>Created</span>
-            <span />
-          </div>
-          {shown.map((p) => (
-            <div
-              key={p.id}
-              className="grid gap-3 border-b border-[#292b2d] px-5 py-4 last:border-0 md:grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] md:items-center md:gap-4"
-            >
-              <div>
-                <p className="text-sm font-medium">{p.name}</p>
-                <p className="mt-1 text-[11px] text-[#6f716f]">{p.description}</p>
-              </div>
-              <span className="text-xs text-[#a7a7a3]">{p.taskCount} tasks</span>
-              <div>
-                <span className="text-xs">{p.progress}%</span>
-                <div className="mt-1 h-1 w-24 rounded-full bg-[#292b2d]">
-                  <div className="h-full rounded-full bg-[#b8ff3d]" style={{ width: `${p.progress}%` }} />
+      
+      {/* Loading State */}
+      {loading ? (
+        view === 'grid' ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <Surface key={i} className="animate-pulse">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2.5 w-2.5 rounded-full bg-[#3a3a3a]" />
+                    <div className="h-4 w-32 rounded bg-[#3a3a3a]" />
+                  </div>
+                  <div className="h-6 w-6 rounded-full bg-[#3a3a3a]" />
                 </div>
-              </div>
-              <span className="text-xs text-[#898b87]">{formatProjectCreatedDate(p.created_at)}</span>
-              <button onClick={() => onToast('Project menu opened.')} className="text-[#898b87] hover:text-white">
-                <MoreHorizontal size={17} />
-              </button>
+                <div className="mt-5 space-y-2">
+                  <div className="h-3 w-full rounded bg-[#3a3a3a]" />
+                  <div className="h-3 w-3/4 rounded bg-[#3a3a3a]" />
+                </div>
+                <div className="mt-6 flex items-end justify-between">
+                  <div className="h-8 w-16 rounded bg-[#3a3a3a]" />
+                </div>
+                <div className="mt-3 h-2 rounded-full bg-[#3a3a3a]" />
+                <div className="mt-5 flex justify-between border-t border-[#3a3a3a] pt-4">
+                  <div className="h-3 w-24 rounded bg-[#3a3a3a]" />
+                  <div className="h-3 w-16 rounded bg-[#3a3a3a]" />
+                </div>
+              </Surface>
+            ))}
+          </div>
+        ) : (
+          <Surface className="overflow-hidden p-0">
+            <div className="hidden grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] gap-4 border-b border-[#292b2d] px-5 py-4 text-[10px] uppercase tracking-widest text-[#6f716f] md:grid">
+              <span>Project</span>
+              <span>Tasks</span>
+              <span>Progress</span>
+              <span>Created</span>
+              <span />
             </div>
-          ))}
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="grid gap-3 border-b border-[#292b2d] px-5 py-4 last:border-0 md:grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] md:items-center md:gap-4 animate-pulse"
+              >
+                <div className="space-y-2">
+                  <div className="h-4 w-48 rounded bg-[#3a3a3a]" />
+                  <div className="h-3 w-64 rounded bg-[#3a3a3a]" />
+                </div>
+                <div className="h-3 w-16 rounded bg-[#3a3a3a]" />
+                <div className="space-y-1">
+                  <div className="h-3 w-12 rounded bg-[#3a3a3a]" />
+                  <div className="h-1 w-24 rounded-full bg-[#3a3a3a]" />
+                </div>
+                <div className="h-3 w-16 rounded bg-[#3a3a3a]" />
+                <div className="h-4 w-4 rounded bg-[#3a3a3a]" />
+              </div>
+            ))}
+          </Surface>
+        )
+      ) : error ? (
+        /* Error State */
+        <Surface className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+            <X size={23} />
+          </div>
+          <p className="text-base font-medium">Failed to load projects</p>
+          <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">{error}</p>
+          {onRetry && (
+            <button 
+              onClick={onRetry}
+              className="mt-5 rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69]"
+            >
+              Retry
+            </button>
+          )}
         </Surface>
+      ) : shown.length === 0 && search ? (
+        /* Empty Search State */
+        <Surface className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#b8ff3d]/30 bg-[#b8ff3d]/10 text-[#b8ff3d]">
+            <Search size={23} />
+          </div>
+          <p className="text-base font-medium">No projects found</p>
+          <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">
+            No projects match "{search}". Try a different search term.
+          </p>
+        </Surface>
+      ) : shown.length === 0 ? (
+        /* Empty State */
+        <Surface className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#b8ff3d]/30 bg-[#b8ff3d]/10 text-[#b8ff3d]">
+            <FolderKanban size={23} />
+          </div>
+          <p className="text-base font-medium">No projects yet</p>
+          <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">
+            Get started by creating your first project.
+          </p>
+          <button 
+            onClick={onCreate}
+            className="mt-5 rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a]"
+          >
+            Create project
+          </button>
+        </Surface>
+      ) : (
+        /* Projects Display */
+        view === 'grid' ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {shown.map((p, index) => (
+              <ProjectCard key={p.id} project={p} index={index} onToast={onToast} />
+            ))}
+          </div>
+        ) : (
+          <Surface className="overflow-hidden p-0">
+            <div className="hidden grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] gap-4 border-b border-[#292b2d] px-5 py-4 text-[10px] uppercase tracking-widest text-[#6f716f] md:grid">
+              <span>Project</span>
+              <span>Tasks</span>
+              <span>Progress</span>
+              <span>Created</span>
+              <span />
+            </div>
+            {shown.map((p) => (
+              <div
+                key={p.id}
+                className="grid gap-3 border-b border-[#292b2d] px-5 py-4 last:border-0 md:grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] md:items-center md:gap-4"
+              >
+                <div>
+                  <p className="text-sm font-medium">{p.name}</p>
+                  <p className="mt-1 text-[11px] text-[#6f716f]">{p.description}</p>
+                </div>
+                <span className="text-xs text-[#a7a7a3]">{p.taskCount} tasks</span>
+                <div>
+                  <span className="text-xs">{p.progress}%</span>
+                  <div className="mt-1 h-1 w-24 rounded-full bg-[#292b2d]">
+                    <div className="h-full rounded-full bg-[#b8ff3d]" style={{ width: `${p.progress}%` }} />
+                  </div>
+                </div>
+                <span className="text-xs text-[#898b87]">{formatProjectCreatedDate(p.created_at)}</span>
+                <button onClick={() => onToast('Project menu opened.')} className="text-[#898b87] hover:text-white">
+                  <MoreHorizontal size={17} />
+                </button>
+              </div>
+            ))}
+          </Surface>
+        )
       )}
     </>
   );
@@ -853,38 +1043,214 @@ function ProjectCard({
 // ============================================
 
 function ProjectDetail({
-  projects,
-  tasks,
   onToast,
   onAddTask,
+  refreshTrigger,
 }: {
-  projects: Project[];
-  tasks: Task[];
   onToast: (text: string) => void;
   onAddTask: () => void;
+  refreshTrigger?: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const projectId = pathname.split('/projects/')[1];
   
-  const project = getProjectById(projects, projectId);
+  const [project, setProject] = useState<Project | null>(null);
+  const [projectLoading, setProjectLoading] = useState(true);
+  const [projectError, setProjectError] = useState<string | null>(null);
+  
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  
   const [filter, setFilter] = useState<'All' | TaskStatus>('All');
 
-  if (!project) {
+  // Fetch project
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchProject() {
+      if (!projectId) return;
+      
+      try {
+        setProjectLoading(true);
+        setProjectError(null);
+        const response = await getProject(projectId);
+        
+        if (mounted && response.success) {
+          setProject(response.data);
+        }
+      } catch (error) {
+        if (mounted) {
+          setProjectError(
+            error instanceof Error ? error.message : 'Failed to load project'
+          );
+        }
+      } finally {
+        if (mounted) {
+          setProjectLoading(false);
+        }
+      }
+    }
+
+    fetchProject();
+
+    return () => {
+      mounted = false;
+    };
+  }, [projectId]);
+
+  // Fetch tasks
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchTasks() {
+      if (!projectId) return;
+      
+      try {
+        setTasksLoading(true);
+        setTasksError(null);
+        
+        const params: any = {};
+        if (filter !== 'All') {
+          params.status = filter;
+        }
+        
+        const response = await getTasks(projectId, params);
+        
+        if (mounted && response.success) {
+          setTasks(response.data);
+        }
+      } catch (error) {
+        if (mounted) {
+          setTasksError(
+            error instanceof Error ? error.message : 'Failed to load tasks'
+          );
+        }
+      } finally {
+        if (mounted) {
+          setTasksLoading(false);
+        }
+      }
+    }
+
+    fetchTasks();
+
+    return () => {
+      mounted = false;
+    };
+  }, [projectId, filter]);
+
+  const retryProject = () => {
+    setProjectLoading(true);
+    setProjectError(null);
+    getProject(projectId)
+      .then(response => {
+        if (response.success) {
+          setProject(response.data);
+        }
+      })
+      .catch(err => {
+        setProjectError(
+          err instanceof Error ? err.message : 'Failed to load project'
+        );
+      })
+      .finally(() => {
+        setProjectLoading(false);
+      });
+  };
+
+  const retryTasks = () => {
+    setTasksLoading(true);
+    setTasksError(null);
+    
+    const params: any = {};
+    if (filter !== 'All') {
+      params.status = filter;
+    }
+    
+    getTasks(projectId, params)
+      .then(response => {
+        if (response.success) {
+          setTasks(response.data);
+        }
+      })
+      .catch(err => {
+        setTasksError(
+          err instanceof Error ? err.message : 'Failed to load tasks'
+        );
+      })
+      .finally(() => {
+        setTasksLoading(false);
+      });
+  };
+
+  // Loading state for project
+  if (projectLoading) {
     return (
-      <div className="text-center py-20">
-        <p className="text-[#898b87]">Project not found</p>
-      </div>
+      <>
+        <button onClick={() => router.push('/projects')} className="mb-6 flex items-center gap-1 text-xs text-[#898b87] hover:text-[#b8ff3d]">
+          <ChevronLeft size={14} />
+          Back to projects
+        </button>
+        <div className="animate-pulse">
+          <div className="mb-8">
+            <div className="mb-3 h-3 w-32 rounded bg-[#3a3a3a]" />
+            <div className="h-10 w-96 rounded bg-[#3a3a3a]" />
+            <div className="mt-2 h-4 w-64 rounded bg-[#3a3a3a]" />
+          </div>
+          <div className="mb-4 grid gap-4 sm:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Surface key={i}>
+                <div className="mb-8 flex items-center justify-between">
+                  <div className="h-3 w-20 rounded bg-[#3a3a3a]" />
+                  <div className="h-8 w-8 rounded-full bg-[#3a3a3a]" />
+                </div>
+                <div className="h-8 w-16 rounded bg-[#3a3a3a]" />
+                <div className="mt-3 flex items-center gap-1.5">
+                  <div className="h-3 w-12 rounded bg-[#3a3a3a]" />
+                </div>
+              </Surface>
+            ))}
+          </div>
+        </div>
+      </>
     );
   }
 
-  const projectTasks = getTasksForProject(tasks, project.id);
-  const filtered = filter === 'All' ? projectTasks : projectTasks.filter((task) => task.status === filter);
-  const progress = getProjectProgress(tasks, project.id);
-  const taskCount = getProjectTaskCount(tasks, project.id);
-  const completedCount = getCompletedTaskCount(tasks, project.id);
-  const todoCount = projectTasks.filter((t) => t.status === 'todo').length;
-  const inProgressCount = projectTasks.filter((t) => t.status === 'in-progress').length;
+  // Error state for project
+  if (projectError || !project) {
+    return (
+      <>
+        <button onClick={() => router.push('/projects')} className="mb-6 flex items-center gap-1 text-xs text-[#898b87] hover:text-[#b8ff3d]">
+          <ChevronLeft size={14} />
+          Back to projects
+        </button>
+        <Surface className="flex flex-col items-center justify-center py-20 text-center">
+          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+            <X size={23} />
+          </div>
+          <p className="text-base font-medium">Failed to load project</p>
+          <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">
+            {projectError || 'Project not found'}
+          </p>
+          <button 
+            onClick={retryProject}
+            className="mt-5 rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69]"
+          >
+            Retry
+          </button>
+        </Surface>
+      </>
+    );
+  }
+
+  // Calculate statistics from real task data
+  const taskCount = tasks.length;
+  const completedCount = tasks.filter(t => t.status === 'done').length;
+  const todoCount = tasks.filter(t => t.status === 'todo').length;
+  const inProgressCount = tasks.filter(t => t.status === 'in-progress').length;
+  const progress = taskCount > 0 ? Math.round((completedCount / taskCount) * 100) : 0;
 
   return (
     <>
@@ -944,9 +1310,65 @@ function ProjectDetail({
             </div>
           </div>
           <div>
-            {filtered.map((task) => (
-              <TaskRow key={task.id} task={task} projects={projects} onToast={onToast} />
-            ))}
+            {tasksLoading ? (
+              // Loading state for tasks
+              <div className="divide-y divide-[#292b2d]">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="flex items-center gap-3 px-5 py-4 sm:px-6 animate-pulse">
+                    <div className="h-7 w-7 rounded-full bg-[#3a3a3a]" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3 w-48 rounded bg-[#3a3a3a]" />
+                      <div className="h-3 w-32 rounded bg-[#3a3a3a]" />
+                    </div>
+                    <div className="h-6 w-20 rounded-full bg-[#3a3a3a]" />
+                    <div className="h-6 w-16 rounded-full bg-[#3a3a3a]" />
+                  </div>
+                ))}
+              </div>
+            ) : tasksError ? (
+              // Error state for tasks
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+                  <X size={20} />
+                </div>
+                <p className="text-sm font-medium">Failed to load tasks</p>
+                <p className="mt-1 text-xs text-[#898b87]">{tasksError}</p>
+                <button 
+                  onClick={retryTasks}
+                  className="mt-4 rounded-full bg-[#b8ff3d] px-4 py-2 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69]"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : tasks.length === 0 ? (
+              // Empty state
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-[#b8ff3d]/30 bg-[#b8ff3d]/10 text-[#b8ff3d]">
+                  <Check size={20} />
+                </div>
+                <p className="text-sm font-medium">
+                  {filter === 'All' ? 'No tasks yet' : `No ${formatTaskStatus(filter).toLowerCase()} tasks`}
+                </p>
+                <p className="mt-1 text-xs text-[#898b87]">
+                  {filter === 'All' 
+                    ? 'Get started by adding your first task.' 
+                    : 'Try selecting a different filter.'}
+                </p>
+                {filter === 'All' && (
+                  <button 
+                    onClick={onAddTask}
+                    className="mt-4 rounded-full bg-[#b8ff3d] px-4 py-2 text-xs font-semibold text-[#0a0a0a]"
+                  >
+                    Add task
+                  </button>
+                )}
+              </div>
+            ) : (
+              // Task list
+              tasks.map((task) => (
+                <TaskRow key={task.id} task={task} projectName={project.name} onToast={onToast} />
+              ))
+            )}
           </div>
         </Surface>
       </div>
@@ -954,8 +1376,7 @@ function ProjectDetail({
   );
 }
 
-function TaskRow({ task, projects, onToast }: { task: Task; projects: Project[]; onToast: (text: string) => void }) {
-  const projectName = getProjectNameForTask(task, projects);
+function TaskRow({ task, projectName, onToast }: { task: Task; projectName: string; onToast: (text: string) => void }) {
   const displayDue = formatTaskDueDate(task);
   const overdue = isTaskOverdue(task);
   const createdDate = formatTaskCreatedDate(task);
@@ -1036,7 +1457,12 @@ function TasksPage({
       {filtered.length > 0 ? (
         <Surface className="p-0">
           {filtered.map((task) => (
-            <TaskRow key={task.id} task={task} projects={projects} onToast={onToast} />
+            <TaskRow 
+              key={task.id} 
+              task={task} 
+              projectName={getProjectNameForTask(task, projects)} 
+              onToast={onToast} 
+            />
           ))}
         </Surface>
       ) : (
@@ -1214,10 +1640,71 @@ function CommandPalette({
 // FORM MODAL
 // ============================================
 
-function FormModal({ kind, onClose, onSave }: { kind: 'project' | 'task'; onClose: () => void; onSave: () => void }) {
+function FormModal({ 
+  kind, 
+  projectId, 
+  onClose, 
+  onSuccess 
+}: { 
+  kind: 'project' | 'task'; 
+  projectId: string | null;
+  onClose: () => void; 
+  onSuccess: () => void;
+}) {
+  // Project fields
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const valid = name.trim().length > 0;
+  
+  // Task fields
+  const [title, setTitle] = useState('');
+  const [taskDescription, setTaskDescription] = useState('');
+  const [status, setStatus] = useState<TaskStatus>('todo');
+  const [priority, setPriority] = useState<TaskPriority>('medium');
+  const [dueDate, setDueDate] = useState('');
+  
+  // UI state
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Validation
+  const valid = kind === 'project' 
+    ? name.trim().length > 0
+    : title.trim().length >= 3;
+
+  const handleSubmit = async () => {
+    if (!valid) return;
+    
+    if (kind === 'task') {
+      // Task creation
+      if (!projectId) {
+        setError('Project ID is required to create a task');
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+
+        const taskData = {
+          project_id: projectId,
+          title: title.trim(),
+          description: taskDescription.trim() || undefined,
+          status,
+          priority,
+          due_date: dueDate || null,
+        };
+
+        await createTask(projectId, taskData);
+        onSuccess();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to create task');
+        setLoading(false);
+      }
+    } else {
+      // Project creation - placeholder for future implementation
+      onSuccess();
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4" onMouseDown={onClose}>
@@ -1228,37 +1715,116 @@ function FormModal({ kind, onClose, onSave }: { kind: 'project' | 'task'; onClos
             <X size={18} />
           </button>
         </div>
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-[#3c251f] bg-[#2a1a17] px-4 py-3 text-sm text-[#ff9b7d]">
+            {error}
+          </div>
+        )}
+
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-[#f5f5f2]">Name</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={`${kind === 'project' ? 'Project' : 'Task'} name`}
-              className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f]"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[#f5f5f2]">Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Add a description..."
-              rows={3}
-              className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f]"
-            />
-          </div>
+          {kind === 'project' ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-[#f5f5f2]">Name</label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Project name"
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#f5f5f2]">Description</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Add a description..."
+                  rows={3}
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f]"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-[#f5f5f2]">
+                  Title <span className="text-[#ff9b7d]">*</span>
+                </label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Task title (min 3 characters)"
+                  disabled={loading}
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f] disabled:opacity-50"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#f5f5f2]">Description</label>
+                <textarea
+                  value={taskDescription}
+                  onChange={(e) => setTaskDescription(e.target.value)}
+                  placeholder="Add a description..."
+                  rows={3}
+                  disabled={loading}
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f] disabled:opacity-50"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#f5f5f2]">Status</label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as TaskStatus)}
+                    disabled={loading}
+                    className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] disabled:opacity-50"
+                  >
+                    <option value="todo">To Do</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="done">Done</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[#f5f5f2]">Priority</label>
+                  <select
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value as TaskPriority)}
+                    disabled={loading}
+                    className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] disabled:opacity-50"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#f5f5f2]">Due Date</label>
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  disabled={loading}
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] disabled:opacity-50"
+                />
+              </div>
+            </>
+          )}
         </div>
         <div className="mt-6 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-full border border-[#292b2d] px-4 py-2.5 text-xs font-semibold text-[#f5f5f2] hover:bg-[#1d1f20]">
+          <button 
+            onClick={onClose} 
+            disabled={loading}
+            className="rounded-full border border-[#292b2d] px-4 py-2.5 text-xs font-semibold text-[#f5f5f2] hover:bg-[#1d1f20] disabled:opacity-50"
+          >
             Cancel
           </button>
           <button
-            onClick={onSave}
-            disabled={!valid}
+            onClick={handleSubmit}
+            disabled={!valid || loading}
             className="rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69] disabled:opacity-50"
           >
-            Create
+            {loading ? 'Creating...' : 'Create'}
           </button>
         </div>
       </div>
