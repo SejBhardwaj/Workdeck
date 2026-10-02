@@ -12,7 +12,7 @@ import {
 // Import new types and data
 import { Project, Task, TaskStatus, TaskPriority } from '@/types';
 import { mockProjects, mockTasks } from '@/lib/mock';
-import { getProjects, getProject, createProject, deleteProject } from '@/lib/api/projects';
+import { getProjects, getProject, createProject, updateProject, deleteProject } from '@/lib/api/projects';
 import { getTasks, createTask, getAllTasks, updateTask, deleteTask } from '@/lib/api/tasks';
 import {
   enrichProjectsWithStats,
@@ -58,6 +58,7 @@ export function DataTaskerApp() {
   const [toast, setToast] = useState('');
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
+  const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [taskRefreshTrigger, setTaskRefreshTrigger] = useState(0);
@@ -371,6 +372,10 @@ export function DataTaskerApp() {
                 setCurrentProjectId(projectId);
                 setModal('task');
               }}
+              onEditProject={(project) => {
+                setProjectToEdit(project);
+                setModal('project');
+              }}
               onEditTask={(task) => {
                 setTaskToEdit(task);
                 setModal('task');
@@ -400,6 +405,10 @@ export function DataTaskerApp() {
               tasks={tasks} 
               onCreate={() => setModal('project')} 
               onToast={setToast}
+              onEdit={(project) => {
+                setProjectToEdit(project);
+                setModal('project');
+              }}
               onDelete={(project) => {
                 setProjectToDelete(project);
               }}
@@ -503,15 +512,19 @@ export function DataTaskerApp() {
           projectId={modal === 'task' ? currentProjectId : null}
           projects={projects}
           taskToEdit={taskToEdit}
+          projectToEdit={projectToEdit}
           onClose={() => {
             setModal(null);
             setTaskToEdit(null);
+            setProjectToEdit(null);
           }}
           onSuccess={async () => {
-            const isEditing = !!taskToEdit;
+            const isEditingTask = !!taskToEdit;
+            const isEditingProject = !!projectToEdit;
             setModal(null);
             setTaskToEdit(null);
-            setToast(`${modal === 'project' ? 'Project' : 'Task'} ${isEditing ? 'updated' : 'created'} successfully.`);
+            setProjectToEdit(null);
+            setToast(`${modal === 'project' ? 'Project' : 'Task'} ${(isEditingTask || isEditingProject) ? 'updated' : 'created'} successfully.`);
             
             if (modal === 'task') {
               // Refresh project detail tasks
@@ -534,6 +547,10 @@ export function DataTaskerApp() {
                 }
               } catch (error) {
                 console.error('Failed to refresh projects:', error);
+              }
+              // Also refresh project detail if we're on that page
+              if (isDetail) {
+                setTaskRefreshTrigger(prev => prev + 1);
               }
             }
           }}
@@ -1133,6 +1150,7 @@ function Projects({
   tasks,
   onCreate,
   onToast,
+  onEdit,
   onDelete,
   loading,
   error,
@@ -1142,6 +1160,7 @@ function Projects({
   tasks: Task[];
   onCreate: () => void;
   onToast: (text: string) => void;
+  onEdit: (project: Project) => void;
   onDelete: (project: Project) => void;
   loading?: boolean;
   error?: string | null;
@@ -1299,7 +1318,7 @@ function Projects({
         view === 'grid' ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {shown.map((p, index) => (
-              <ProjectCard key={p.id} project={p} index={index} onToast={onToast} onDelete={onDelete} />
+              <ProjectCard key={p.id} project={p} index={index} onToast={onToast} onEdit={onEdit} onDelete={onDelete} />
             ))}
           </div>
         ) : (
@@ -1315,6 +1334,7 @@ function Projects({
               <ProjectListRow 
                 key={p.id}
                 project={p}
+                onEdit={onEdit}
                 onDelete={onDelete}
               />
             ))}
@@ -1329,11 +1349,13 @@ function ProjectCard({
   project: p,
   index,
   onToast,
+  onEdit,
   onDelete,
 }: {
   project: ReturnType<typeof enrichProjectsWithStats>[0];
   index: number;
   onToast: (text: string) => void;
+  onEdit: (project: Project) => void;
   onDelete: (project: Project) => void;
 }) {
   const router = useRouter();
@@ -1360,6 +1382,15 @@ function ProjectCard({
                 onClick={() => setMenuOpen(false)}
               />
               <div className="absolute right-0 top-8 z-20 w-32 rounded-xl border border-[#292b2d] bg-[#171819] py-1 shadow-2xl">
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onEdit(p);
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-[#f5f5f2] hover:bg-[#1d1f20]"
+                >
+                  Edit
+                </button>
                 <button
                   onClick={() => {
                     setMenuOpen(false);
@@ -1394,9 +1425,11 @@ function ProjectCard({
 
 function ProjectListRow({
   project: p,
+  onEdit,
   onDelete,
 }: {
   project: ReturnType<typeof enrichProjectsWithStats>[0];
+  onEdit: (project: Project) => void;
   onDelete: (project: Project) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1432,6 +1465,15 @@ function ProjectListRow({
               <button
                 onClick={() => {
                   setMenuOpen(false);
+                  onEdit(p);
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-[#f5f5f2] hover:bg-[#1d1f20]"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
                   onDelete(p);
                 }}
                 className="w-full px-3 py-2 text-left text-xs text-[#ff9b7d] hover:bg-[#1d1f20]"
@@ -1453,6 +1495,7 @@ function ProjectListRow({
 function ProjectDetail({
   onToast,
   onAddTask,
+  onEditProject,
   onEditTask,
   onDeleteTask,
   onDeleteProject,
@@ -1460,6 +1503,7 @@ function ProjectDetail({
 }: {
   onToast: (text: string) => void;
   onAddTask: () => void;
+  onEditProject: (project: Project) => void;
   onEditTask: (task: Task) => void;
   onDeleteTask: (task: Task) => void;
   onDeleteProject: (project: Project) => void;
@@ -1695,14 +1739,18 @@ function ProjectDetail({
         copy={project.description}
         action={
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <button
-                onClick={() => onDeleteProject(project)}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#292b2d] px-5 text-sm font-semibold text-[#f5f5f2] hover:border-[#ff9b7d] hover:text-[#ff9b7d]"
-              >
-                Delete Project
-              </button>
-            </div>
+            <button
+              onClick={() => onEditProject(project)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#292b2d] px-5 text-sm font-semibold text-[#f5f5f2] hover:border-[#b8ff3d] hover:text-[#b8ff3d]"
+            >
+              Edit Project
+            </button>
+            <button
+              onClick={() => onDeleteProject(project)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#292b2d] px-5 text-sm font-semibold text-[#f5f5f2] hover:border-[#ff9b7d] hover:text-[#ff9b7d]"
+            >
+              Delete Project
+            </button>
             <button
               onClick={onAddTask}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#b8ff3d] px-5 text-sm font-semibold text-[#0a0a0a]"
@@ -2449,6 +2497,7 @@ function FormModal({
   projectId, 
   projects,
   taskToEdit,
+  projectToEdit,
   onClose, 
   onSuccess 
 }: { 
@@ -2456,10 +2505,12 @@ function FormModal({
   projectId: string | null;
   projects: Project[];
   taskToEdit: Task | null;
+  projectToEdit: Project | null;
   onClose: () => void; 
   onSuccess: () => void;
 }) {
-  const isEditing = !!taskToEdit;
+  const isEditingTask = !!taskToEdit;
+  const isEditingProject = !!projectToEdit;
   
   // Project fields
   const [name, setName] = useState('');
@@ -2487,7 +2538,11 @@ function FormModal({
       setDueDate(taskToEdit.due_date ? taskToEdit.due_date.split('T')[0] : '');
       setSelectedProjectId(taskToEdit.project_id);
     }
-  }, [taskToEdit]);
+    if (projectToEdit) {
+      setName(projectToEdit.name);
+      setDescription(projectToEdit.description || '');
+    }
+  }, [taskToEdit, projectToEdit]);
 
   // Determine the project ID to use for task creation
   // If projectId is provided (from Project Detail), use it
@@ -2495,19 +2550,19 @@ function FormModal({
   const effectiveProjectId = projectId || selectedProjectId;
   
   // Check if we need to show project selector (only when creating from global tasks)
-  const showProjectSelector = kind === 'task' && !projectId && !isEditing;
+  const showProjectSelector = kind === 'task' && !projectId && !isEditingTask;
 
   // Validation
   const valid = kind === 'project' 
     ? name.trim().length > 0
-    : title.trim().length >= 3 && (projectId || selectedProjectId || isEditing);
+    : title.trim().length >= 3 && (projectId || selectedProjectId || isEditingTask);
 
   const handleSubmit = async () => {
     if (!valid) return;
     
     if (kind === 'task') {
       // Task creation or editing
-      if (isEditing && taskToEdit) {
+      if (isEditingTask && taskToEdit) {
         // EDIT MODE
         try {
           setLoading(true);
@@ -2555,21 +2610,41 @@ function FormModal({
         }
       }
     } else {
-      // Project creation
-      try {
-        setLoading(true);
-        setError(null);
+      // Project creation or editing
+      if (isEditingProject && projectToEdit) {
+        // EDIT MODE
+        try {
+          setLoading(true);
+          setError(null);
 
-        const projectData = {
-          name: name.trim().substring(0, 255), // Max 255 chars
-          description: description.trim().substring(0, 1000) || undefined, // Max 1000 chars, optional
-        };
+          const updateData = {
+            name: name.trim().substring(0, 255), // Max 255 chars
+            description: description.trim().substring(0, 1000) || undefined, // Max 1000 chars, optional
+          };
 
-        await createProject(projectData);
-        onSuccess();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create project');
-        setLoading(false);
+          await updateProject(projectToEdit.id, updateData);
+          onSuccess();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to update project');
+          setLoading(false);
+        }
+      } else {
+        // CREATE MODE
+        try {
+          setLoading(true);
+          setError(null);
+
+          const projectData = {
+            name: name.trim().substring(0, 255), // Max 255 chars
+            description: description.trim().substring(0, 1000) || undefined, // Max 1000 chars, optional
+          };
+
+          await createProject(projectData);
+          onSuccess();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to create project');
+          setLoading(false);
+        }
       }
     }
   };
@@ -2578,7 +2653,12 @@ function FormModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4" onMouseDown={onClose}>
       <div className="w-full max-w-[520px] rounded-2xl border border-[#292b2d] bg-[#111214] p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">{isEditing ? 'Edit' : 'Create'} {kind}</h2>
+          <h2 className="text-xl font-semibold">
+            {kind === 'task' 
+              ? (isEditingTask ? 'Edit Task' : 'Create Task')
+              : (isEditingProject ? 'Edit Project' : 'Create Project')
+            }
+          </h2>
           <button onClick={onClose} className="rounded-full p-1 text-[#898b87] hover:bg-[#1d1f20] hover:text-white">
             <X size={18} />
           </button>
@@ -2724,7 +2804,14 @@ function FormModal({
             disabled={!valid || loading}
             className="rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69] disabled:opacity-50"
           >
-            {loading ? 'Creating...' : 'Create'}
+            {loading 
+              ? (kind === 'task' 
+                  ? (isEditingTask ? 'Updating...' : 'Creating...')
+                  : (isEditingProject ? 'Updating...' : 'Creating...'))
+              : (kind === 'task' 
+                  ? (isEditingTask ? 'Update Task' : 'Create Task')
+                  : (isEditingProject ? 'Update Project' : 'Create Project'))
+            }
           </button>
         </div>
       </div>

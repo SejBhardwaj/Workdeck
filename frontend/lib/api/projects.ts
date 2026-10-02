@@ -46,6 +46,16 @@ export async function createProject(
   );
 }
 
+export async function updateProject(
+  id: string,
+  data: Partial<CreateProjectInput>
+): Promise<ProjectResponse> {
+  return apiClient.put<ProjectResponse>(
+    `/projects/${encodeURIComponent(id)}`,
+    data
+  );
+}
+
 export async function deleteProject(
   id: string
 ): Promise<DeleteProjectResponse> {
