@@ -2289,10 +2289,31 @@ function Analytics({ projects, tasks }: { projects: Project[]; tasks: Task[] }) 
         }
       />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Total projects" value={String(stats.totalProjects).padStart(2, '0')} change="+2 this month" icon={FolderKanban} />
-        <Stat label="Total tasks" value={String(stats.totalTasks)} change="+12% from last month" icon={Target} />
-        <Stat label="In progress" value={String(stats.inProgressTasks)} change="6 due this week" icon={Zap} />
-        <Stat label="Completed" value={String(stats.completedTasks)} change="+18% from last month" icon={Check} accent />
+        <Stat 
+          label="Total projects" 
+          value={String(stats.totalProjects).padStart(2, '0')} 
+          change={stats.totalProjects === 1 ? '1 project' : `${stats.totalProjects} projects`}
+          icon={FolderKanban} 
+        />
+        <Stat 
+          label="Total tasks" 
+          value={String(stats.totalTasks)} 
+          change={`${stats.completionRate}% completed`}
+          icon={Target} 
+        />
+        <Stat 
+          label="In progress" 
+          value={String(stats.inProgressTasks)} 
+          change={`${stats.todoTasks} to do`}
+          icon={Zap} 
+        />
+        <Stat 
+          label="Completed" 
+          value={String(stats.completedTasks)} 
+          change={stats.overdueTasks > 0 ? `${stats.overdueTasks} overdue` : 'All on track'}
+          icon={Check} 
+          accent 
+        />
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <Productivity />
