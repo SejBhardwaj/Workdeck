@@ -23,7 +23,7 @@ export interface DeleteTaskResponse {
 
 export interface GetTasksParams {
   status?: "todo" | "in-progress" | "done";
-  sortBy?: "due_date" | "created_at" | "priority";
+  sortBy?: "due_date" | "created_at" | "priority" | "title" | "status";
   sortOrder?: "asc" | "desc";
 }
 
@@ -47,6 +47,45 @@ export async function getTasks(
 
   const queryString = query.toString();
   const url = `/projects/${encodeURIComponent(projectId)}/tasks${queryString ? `?${queryString}` : ''}`;
+  
+  return apiClient.get<TasksResponse>(url);
+}
+
+export interface GetAllTasksParams {
+  status?: "todo" | "in-progress" | "done";
+  priority?: "low" | "medium" | "high";
+  project_id?: string;
+  sortBy?: "due_date" | "created_at" | "priority" | "title" | "status";
+  sortOrder?: "asc" | "desc";
+}
+
+export async function getAllTasks(
+  params: GetAllTasksParams = {}
+): Promise<TasksResponse> {
+  const query = new URLSearchParams();
+
+  if (params.status) {
+    query.set("status", params.status);
+  }
+
+  if (params.priority) {
+    query.set("priority", params.priority);
+  }
+
+  if (params.project_id) {
+    query.set("project_id", params.project_id);
+  }
+
+  if (params.sortBy) {
+    query.set("sortBy", params.sortBy);
+  }
+
+  if (params.sortOrder) {
+    query.set("sortOrder", params.sortOrder);
+  }
+
+  const queryString = query.toString();
+  const url = `/tasks${queryString ? `?${queryString}` : ''}`;
   
   return apiClient.get<TasksResponse>(url);
 }

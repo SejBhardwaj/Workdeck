@@ -34,7 +34,16 @@ class TaskService {
     // Validate sortBy to prevent SQL injection
     const allowedSortFields = ['created_at', 'due_date', 'title', 'priority', 'status'];
     if (allowedSortFields.includes(sortBy)) {
-      sql += ` ORDER BY ${sortBy} ${sortOrder}`;
+      // Use CASE expression for semantic priority ordering
+      if (sortBy === 'priority') {
+        sql += ` ORDER BY CASE 
+          WHEN priority = 'low' THEN 1 
+          WHEN priority = 'medium' THEN 2 
+          WHEN priority = 'high' THEN 3 
+        END ${sortOrder}`;
+      } else {
+        sql += ` ORDER BY ${sortBy} ${sortOrder}`;
+      }
     } else {
       sql += ' ORDER BY created_at DESC';
     }

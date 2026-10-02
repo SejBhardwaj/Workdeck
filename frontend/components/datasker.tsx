@@ -12,8 +12,8 @@ import {
 // Import new types and data
 import { Project, Task, TaskStatus, TaskPriority } from '@/types';
 import { mockProjects, mockTasks } from '@/lib/mock';
-import { getProjects, getProject } from '@/lib/api/projects';
-import { getTasks, createTask } from '@/lib/api/tasks';
+import { getProjects, getProject, createProject, deleteProject } from '@/lib/api/projects';
+import { getTasks, createTask, getAllTasks, updateTask, deleteTask } from '@/lib/api/tasks';
 import {
   enrichProjectsWithStats,
   getProjectById,
@@ -57,12 +57,24 @@ export function DataTaskerApp() {
   const [modal, setModal] = useState<'project' | 'task' | null>(null);
   const [toast, setToast] = useState('');
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [taskRefreshTrigger, setTaskRefreshTrigger] = useState(0);
+  
+  // Sorting state for global tasks
+  const [taskSortBy, setTaskSortBy] = useState<'created_at' | 'due_date' | 'priority' | 'title' | 'status'>('created_at');
+  const [taskSortOrder, setTaskSortOrder] = useState<'asc' | 'desc'>('desc');
   
   // API state for projects
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  
+  // API state for global tasks
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState<string | null>(null);
   
   const isDetail = pathname.startsWith('/projects/') && pathname !== '/projects';
   const page = isDetail
@@ -70,9 +82,6 @@ export function DataTaskerApp() {
     : pathname === '/'
     ? 'Overview'
     : pathname.slice(1).replace('-', ' ');
-
-  // Get canonical data
-  const tasks = mockTasks;
 
   // Enrich projects with stats for UI display
   const projectsWithStats = enrichProjectsWithStats(projects, tasks);
@@ -109,6 +118,42 @@ export function DataTaskerApp() {
       mounted = false;
     };
   }, []);
+
+  // Fetch global tasks from API
+  useEffect(() => {
+    let mounted = true;
+
+    async function fetchTasks() {
+      try {
+        setTasksLoading(true);
+        setTasksError(null);
+        const response = await getAllTasks({
+          sortBy: taskSortBy,
+          sortOrder: taskSortOrder,
+        });
+        
+        if (mounted && response.success) {
+          setTasks(response.data);
+        }
+      } catch (error) {
+        if (mounted) {
+          setTasksError(
+            error instanceof Error ? error.message : 'Failed to load tasks'
+          );
+        }
+      } finally {
+        if (mounted) {
+          setTasksLoading(false);
+        }
+      }
+    }
+
+    fetchTasks();
+
+    return () => {
+      mounted = false;
+    };
+  }, [taskSortBy, taskSortOrder]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -313,9 +358,20 @@ export function DataTaskerApp() {
             <ProjectDetail 
               onToast={setToast} 
               onAddTask={() => {
-                const projectId = pathname.split('/projects/')[1];
+                const rawProjectId = pathname.split('/projects/')[1];
+                const projectId = rawProjectId ? rawProjectId.split('/')[0].trim() : '';
                 setCurrentProjectId(projectId);
                 setModal('task');
+              }}
+              onEditTask={(task) => {
+                setTaskToEdit(task);
+                setModal('task');
+              }}
+              onDeleteTask={(task) => {
+                setTaskToDelete(task);
+              }}
+              onDeleteProject={(project) => {
+                setProjectToDelete(project);
               }}
               refreshTrigger={taskRefreshTrigger}
             />
@@ -327,6 +383,9 @@ export function DataTaskerApp() {
               tasks={tasks} 
               onCreate={() => setModal('project')} 
               onToast={setToast}
+              onDelete={(project) => {
+                setProjectToDelete(project);
+              }}
               loading={projectsLoading}
               error={projectsError}
               onRetry={() => {
@@ -349,7 +408,48 @@ export function DataTaskerApp() {
               }}
             />
           ) : pathname === '/tasks' ? (
-            <TasksPage projects={projects} tasks={tasks} onCreate={() => setModal('task')} onToast={setToast} />
+            <TasksPage 
+              projects={projects} 
+              tasks={tasks} 
+              loading={tasksLoading}
+              error={tasksError}
+              onRetry={() => {
+                setTasksLoading(true);
+                setTasksError(null);
+                getAllTasks({
+                  sortBy: taskSortBy,
+                  sortOrder: taskSortOrder,
+                })
+                  .then(response => {
+                    if (response.success) {
+                      setTasks(response.data);
+                    }
+                  })
+                  .catch(err => {
+                    setTasksError(
+                      err instanceof Error ? err.message : 'Failed to load tasks'
+                    );
+                  })
+                  .finally(() => {
+                    setTasksLoading(false);
+                  });
+              }}
+              onCreate={() => setModal('task')} 
+              onToast={setToast}
+              onEdit={(task) => {
+                setTaskToEdit(task);
+                setModal('task');
+              }}
+              onDelete={(task) => {
+                setTaskToDelete(task);
+              }}
+              sortBy={taskSortBy}
+              sortOrder={taskSortOrder}
+              onSortChange={(sortBy, sortOrder) => {
+                setTaskSortBy(sortBy);
+                setTaskSortOrder(sortOrder);
+              }}
+            />
           ) : pathname === '/analytics' ? (
             <Analytics projects={projects} tasks={tasks} />
           ) : (
@@ -375,12 +475,115 @@ export function DataTaskerApp() {
         <FormModal
           kind={modal}
           projectId={modal === 'task' ? currentProjectId : null}
-          onClose={() => setModal(null)}
-          onSuccess={() => {
+          projects={projects}
+          taskToEdit={taskToEdit}
+          onClose={() => {
             setModal(null);
-            setToast(`${modal === 'project' ? 'Project' : 'Task'} created successfully.`);
+            setTaskToEdit(null);
+          }}
+          onSuccess={async () => {
+            const isEditing = !!taskToEdit;
+            setModal(null);
+            setTaskToEdit(null);
+            setToast(`${modal === 'project' ? 'Project' : 'Task'} ${isEditing ? 'updated' : 'created'} successfully.`);
+            
             if (modal === 'task') {
+              // Refresh project detail tasks
               setTaskRefreshTrigger(prev => prev + 1);
+              // Refresh global tasks
+              try {
+                const response = await getAllTasks();
+                if (response.success) {
+                  setTasks(response.data);
+                }
+              } catch (error) {
+                console.error('Failed to refresh global tasks:', error);
+              }
+            } else {
+              // Refresh projects list
+              try {
+                const response = await getProjects();
+                if (response.success) {
+                  setProjects(response.data);
+                }
+              } catch (error) {
+                console.error('Failed to refresh projects:', error);
+              }
+            }
+          }}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {taskToDelete && (
+        <DeleteConfirmModal
+          taskTitle={taskToDelete.title}
+          onCancel={() => setTaskToDelete(null)}
+          onConfirm={async () => {
+            try {
+              await deleteTask(taskToDelete.id);
+              setTaskToDelete(null);
+              setToast('Task deleted successfully.');
+              
+              // Refresh project detail tasks
+              setTaskRefreshTrigger(prev => prev + 1);
+              
+              // Refresh global tasks
+              try {
+                const response = await getAllTasks();
+                if (response.success) {
+                  setTasks(response.data);
+                }
+              } catch (error) {
+                console.error('Failed to refresh global tasks:', error);
+              }
+            } catch (error) {
+              setToast('Failed to delete task.');
+              console.error('Error deleting task:', error);
+            }
+          }}
+        />
+      )}
+
+      {/* Delete Project Confirmation Modal */}
+      {projectToDelete && (
+        <DeleteProjectConfirmModal
+          projectName={projectToDelete.name}
+          taskCount={tasks.filter(t => t.project_id === projectToDelete.id).length}
+          onCancel={() => setProjectToDelete(null)}
+          onConfirm={async () => {
+            try {
+              await deleteProject(projectToDelete.id);
+              setProjectToDelete(null);
+              setToast('Project deleted successfully.');
+              
+              // Refresh projects list
+              try {
+                const response = await getProjects();
+                if (response.success) {
+                  setProjects(response.data);
+                }
+              } catch (error) {
+                console.error('Failed to refresh projects:', error);
+              }
+              
+              // Refresh global tasks (cascade deleted tasks will be gone)
+              try {
+                const response = await getAllTasks();
+                if (response.success) {
+                  setTasks(response.data);
+                }
+              } catch (error) {
+                console.error('Failed to refresh global tasks:', error);
+              }
+              
+              // Navigate back to projects if we're on a deleted project's detail page
+              if (pathname.startsWith('/projects/') && pathname.includes(projectToDelete.id)) {
+                router.push('/projects');
+              }
+            } catch (error) {
+              setToast('Failed to delete project.');
+              console.error('Error deleting project:', error);
             }
           }}
         />
@@ -794,6 +997,7 @@ function Projects({
   tasks,
   onCreate,
   onToast,
+  onDelete,
   loading,
   error,
   onRetry,
@@ -802,6 +1006,7 @@ function Projects({
   tasks: Task[];
   onCreate: () => void;
   onToast: (text: string) => void;
+  onDelete: (project: Project) => void;
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
@@ -958,7 +1163,7 @@ function Projects({
         view === 'grid' ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {shown.map((p, index) => (
-              <ProjectCard key={p.id} project={p} index={index} onToast={onToast} />
+              <ProjectCard key={p.id} project={p} index={index} onToast={onToast} onDelete={onDelete} />
             ))}
           </div>
         ) : (
@@ -971,26 +1176,11 @@ function Projects({
               <span />
             </div>
             {shown.map((p) => (
-              <div
+              <ProjectListRow 
                 key={p.id}
-                className="grid gap-3 border-b border-[#292b2d] px-5 py-4 last:border-0 md:grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] md:items-center md:gap-4"
-              >
-                <div>
-                  <p className="text-sm font-medium">{p.name}</p>
-                  <p className="mt-1 text-[11px] text-[#6f716f]">{p.description}</p>
-                </div>
-                <span className="text-xs text-[#a7a7a3]">{p.taskCount} tasks</span>
-                <div>
-                  <span className="text-xs">{p.progress}%</span>
-                  <div className="mt-1 h-1 w-24 rounded-full bg-[#292b2d]">
-                    <div className="h-full rounded-full bg-[#b8ff3d]" style={{ width: `${p.progress}%` }} />
-                  </div>
-                </div>
-                <span className="text-xs text-[#898b87]">{formatProjectCreatedDate(p.created_at)}</span>
-                <button onClick={() => onToast('Project menu opened.')} className="text-[#898b87] hover:text-white">
-                  <MoreHorizontal size={17} />
-                </button>
-              </div>
+                project={p}
+                onDelete={onDelete}
+              />
             ))}
           </Surface>
         )
@@ -1003,12 +1193,16 @@ function ProjectCard({
   project: p,
   index,
   onToast,
+  onDelete,
 }: {
   project: ReturnType<typeof enrichProjectsWithStats>[0];
   index: number;
   onToast: (text: string) => void;
+  onDelete: (project: Project) => void;
 }) {
   const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+  
   return (
     <Surface className="group transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_0_30px_rgba(184,255,61,0.3)]">
       <div className="flex items-start justify-between">
@@ -1016,9 +1210,33 @@ function ProjectCard({
           <span className="h-2.5 w-2.5 rounded-full" style={{ background: getProjectTone(p, index) }} />
           <span className="text-base font-medium">{p.name}</span>
         </button>
-        <button onClick={() => onToast('Project menu opened.')} className="rounded-full p-1.5 text-[#6f716f] hover:bg-[#2a2a2a] hover:text-white">
-          <MoreHorizontal size={17} />
-        </button>
+        <div className="relative">
+          <button 
+            onClick={() => setMenuOpen(!menuOpen)} 
+            className="rounded-full p-1.5 text-[#6f716f] hover:bg-[#2a2a2a] hover:text-white"
+          >
+            <MoreHorizontal size={17} />
+          </button>
+          {menuOpen && (
+            <>
+              <div 
+                className="fixed inset-0 z-10" 
+                onClick={() => setMenuOpen(false)}
+              />
+              <div className="absolute right-0 top-8 z-20 w-32 rounded-xl border border-[#292b2d] bg-[#171819] py-1 shadow-2xl">
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onDelete(p);
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs text-[#ff9b7d] hover:bg-[#1d1f20]"
+                >
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
       <p className="mt-5 h-10 text-xs leading-5 text-[#898b87]">{p.description}</p>
       <div className="mt-6 flex items-end justify-between">
@@ -1038,6 +1256,60 @@ function ProjectCard({
   );
 }
 
+function ProjectListRow({
+  project: p,
+  onDelete,
+}: {
+  project: ReturnType<typeof enrichProjectsWithStats>[0];
+  onDelete: (project: Project) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  
+  return (
+    <div className="grid gap-3 border-b border-[#292b2d] px-5 py-4 last:border-0 md:grid-cols-[1.5fr_.6fr_.7fr_.6fr_40px] md:items-center md:gap-4">
+      <div>
+        <p className="text-sm font-medium">{p.name}</p>
+        <p className="mt-1 text-[11px] text-[#6f716f]">{p.description}</p>
+      </div>
+      <span className="text-xs text-[#a7a7a3]">{p.taskCount} tasks</span>
+      <div>
+        <span className="text-xs">{p.progress}%</span>
+        <div className="mt-1 h-1 w-24 rounded-full bg-[#292b2d]">
+          <div className="h-full rounded-full bg-[#b8ff3d]" style={{ width: `${p.progress}%` }} />
+        </div>
+      </div>
+      <span className="text-xs text-[#898b87]">{formatProjectCreatedDate(p.created_at)}</span>
+      <div className="relative">
+        <button 
+          onClick={() => setMenuOpen(!menuOpen)} 
+          className="text-[#898b87] hover:text-white"
+        >
+          <MoreHorizontal size={17} />
+        </button>
+        {menuOpen && (
+          <>
+            <div 
+              className="fixed inset-0 z-10" 
+              onClick={() => setMenuOpen(false)}
+            />
+            <div className="absolute right-0 top-8 z-20 w-32 rounded-xl border border-[#292b2d] bg-[#171819] py-1 shadow-2xl">
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onDelete(p);
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-[#ff9b7d] hover:bg-[#1d1f20]"
+              >
+                Delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============================================
 // PROJECT DETAIL PAGE
 // ============================================
@@ -1045,15 +1317,32 @@ function ProjectCard({
 function ProjectDetail({
   onToast,
   onAddTask,
+  onEditTask,
+  onDeleteTask,
+  onDeleteProject,
   refreshTrigger,
 }: {
   onToast: (text: string) => void;
   onAddTask: () => void;
+  onEditTask: (task: Task) => void;
+  onDeleteTask: (task: Task) => void;
+  onDeleteProject: (project: Project) => void;
   refreshTrigger?: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const projectId = pathname.split('/projects/')[1];
+  
+  // Extract project ID from pathname - handle trailing slashes and clean the ID
+  const rawProjectId = pathname.split('/projects/')[1];
+  const projectId = rawProjectId ? rawProjectId.split('/')[0].trim() : '';
+  
+  // Debug logging
+  console.log('ProjectDetail Debug:', {
+    pathname,
+    rawProjectId,
+    projectId,
+    projectIdLength: projectId.length
+  });
   
   const [project, setProject] = useState<Project | null>(null);
   const [projectLoading, setProjectLoading] = useState(true);
@@ -1064,6 +1353,9 @@ function ProjectDetail({
   const [tasksError, setTasksError] = useState<string | null>(null);
   
   const [filter, setFilter] = useState<'All' | TaskStatus>('All');
+  const [sortBy, setSortBy] = useState<'created_at' | 'due_date' | 'priority' | 'title' | 'status'>('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
 
   // Fetch project
   useEffect(() => {
@@ -1111,7 +1403,10 @@ function ProjectDetail({
         setTasksLoading(true);
         setTasksError(null);
         
-        const params: any = {};
+        const params: any = {
+          sortBy,
+          sortOrder,
+        };
         if (filter !== 'All') {
           params.status = filter;
         }
@@ -1139,7 +1434,7 @@ function ProjectDetail({
     return () => {
       mounted = false;
     };
-  }, [projectId, filter]);
+  }, [projectId, filter, sortBy, sortOrder, refreshTrigger]);
 
   const retryProject = () => {
     setProjectLoading(true);
@@ -1263,13 +1558,23 @@ function ProjectDetail({
         title={project.name}
         copy={project.description}
         action={
-          <button
-            onClick={onAddTask}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#b8ff3d] px-5 text-sm font-semibold text-[#0a0a0a]"
-          >
-            <Plus size={17} />
-            Add Task
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => onDeleteProject(project)}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#292b2d] px-5 text-sm font-semibold text-[#f5f5f2] hover:border-[#ff9b7d] hover:text-[#ff9b7d]"
+              >
+                Delete Project
+              </button>
+            </div>
+            <button
+              onClick={onAddTask}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#b8ff3d] px-5 text-sm font-semibold text-[#0a0a0a]"
+            >
+              <Plus size={17} />
+              Add Task
+            </button>
+          </div>
         }
       />
       <div className="mb-4 grid gap-4 sm:grid-cols-4">
@@ -1301,12 +1606,66 @@ function ProjectDetail({
         </Surface>
         <Surface className="p-0">
           <div className="border-b border-[#3a3a3a] p-5 sm:p-6">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {(['All', 'todo', 'in-progress', 'done'] as const).map((value) => (
                 <PillButton key={value} active={filter === value} onClick={() => setFilter(value)}>
                   {value === 'All' ? 'All' : formatTaskStatus(value)}
                 </PillButton>
               ))}
+              <div className="relative ml-auto">
+                <button
+                  onClick={() => setSortMenuOpen(!sortMenuOpen)}
+                  disabled={tasksLoading}
+                  className="flex h-9 items-center gap-2 whitespace-nowrap rounded-full border border-[#292b2d] bg-[#111214] px-3 text-xs text-[#a7a7a3] hover:border-[#555957] hover:text-white disabled:opacity-50"
+                >
+                  <SlidersHorizontal size={14} />
+                  Sort ({sortOrder === 'asc' ? '↑' : '↓'})
+                  <ChevronDown size={14} />
+                </button>
+                {sortMenuOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-10" 
+                      onClick={() => setSortMenuOpen(false)}
+                    />
+                    <div className="absolute right-0 top-10 z-20 w-48 rounded-xl border border-[#292b2d] bg-[#171819] py-1 shadow-2xl">
+                      {[
+                        { value: 'created_at' as const, label: 'Date Created' },
+                        { value: 'due_date' as const, label: 'Due Date' },
+                        { value: 'priority' as const, label: 'Priority' },
+                        { value: 'title' as const, label: 'Title' },
+                        { value: 'status' as const, label: 'Status' },
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          onClick={() => {
+                            if (sortBy === option.value) {
+                              setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                            } else {
+                              setSortBy(option.value);
+                              setSortOrder('asc');
+                            }
+                            setSortMenuOpen(false);
+                          }}
+                          className={cn(
+                            'w-full px-3 py-2 text-left text-xs hover:bg-[#1d1f20]',
+                            sortBy === option.value ? 'text-[#b8ff3d]' : 'text-[#f5f5f2]'
+                          )}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span>{option.label}</span>
+                            {sortBy === option.value && (
+                              <span className="text-[#b8ff3d]">
+                                {sortOrder === 'asc' ? '↑' : '↓'}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
           <div>
@@ -1366,7 +1725,15 @@ function ProjectDetail({
             ) : (
               // Task list
               tasks.map((task) => (
-                <TaskRow key={task.id} task={task} projectName={project.name} onToast={onToast} />
+                <TaskRow 
+                  key={task.id} 
+                  task={task} 
+                  projectName={project.name} 
+                  onToast={onToast}
+                  onUpdate={retryTasks}
+                  onEdit={onEditTask}
+                  onDelete={onDeleteTask}
+                />
               ))
             )}
           </div>
@@ -1376,15 +1743,43 @@ function ProjectDetail({
   );
 }
 
-function TaskRow({ task, projectName, onToast }: { task: Task; projectName: string; onToast: (text: string) => void }) {
+function TaskRow({ 
+  task, 
+  projectName, 
+  onToast,
+  onUpdate,
+  onEdit,
+  onDelete
+}: { 
+  task: Task; 
+  projectName: string; 
+  onToast: (text: string) => void;
+  onUpdate: () => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const displayDue = formatTaskDueDate(task);
   const overdue = isTaskOverdue(task);
   const createdDate = formatTaskCreatedDate(task);
 
+  const handleStatusToggle = async () => {
+    const newStatus = task.status === 'done' ? 'todo' : 'done';
+    
+    try {
+      await updateTask(task.id, { status: newStatus });
+      onToast(newStatus === 'done' ? 'Task marked as complete.' : 'Task reopened.');
+      onUpdate(); // Refresh the task list
+    } catch (error) {
+      onToast('Failed to update task status.');
+      console.error('Error updating task status:', error);
+    }
+  };
+
   return (
     <div className="flex items-center gap-3 border-b border-[#292b2d] px-5 py-4 last:border-0 sm:px-6">
       <button
-        onClick={() => onToast(task.status === 'done' ? 'Task reopened.' : 'Task marked as complete.')}
+        onClick={handleStatusToggle}
         className={cn(
           'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition hover:border-[#b8ff3d]',
           task.status === 'done' ? 'border-[#b8ff3d] bg-[#b8ff3d] text-[#0a0a0a]' : 'border-[#4b4e4c] text-transparent'
@@ -1403,9 +1798,42 @@ function TaskRow({ task, projectName, onToast }: { task: Task; projectName: stri
       <span className={cn('hidden min-w-[70px] text-right text-[11px] sm:block', overdue ? 'text-[#ff9b7d]' : 'text-[#898b87]')}>
         {overdue ? 'Overdue' : displayDue}
       </span>
-      <button onClick={() => onToast('Task actions opened.')} className="text-[#6f716f] hover:text-white">
-        <MoreHorizontal size={16} />
-      </button>
+      <div className="relative">
+        <button 
+          onClick={() => setMenuOpen(!menuOpen)} 
+          className="text-[#6f716f] hover:text-white"
+        >
+          <MoreHorizontal size={16} />
+        </button>
+        {menuOpen && (
+          <>
+            <div 
+              className="fixed inset-0 z-10" 
+              onClick={() => setMenuOpen(false)}
+            />
+            <div className="absolute right-0 top-8 z-20 w-32 rounded-xl border border-[#292b2d] bg-[#171819] py-1 shadow-2xl">
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onEdit(task);
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-[#f5f5f2] hover:bg-[#1d1f20]"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onDelete(task);
+                }}
+                className="w-full px-3 py-2 text-left text-xs text-[#ff9b7d] hover:bg-[#1d1f20]"
+              >
+                Delete
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1417,16 +1845,43 @@ function TaskRow({ task, projectName, onToast }: { task: Task; projectName: stri
 function TasksPage({
   projects,
   tasks,
+  loading,
+  error,
+  onRetry,
   onCreate,
   onToast,
+  onEdit,
+  onDelete,
+  sortBy,
+  sortOrder,
+  onSortChange,
 }: {
   projects: Project[];
   tasks: Task[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
   onCreate: () => void;
   onToast: (text: string) => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
+  sortBy: 'created_at' | 'due_date' | 'priority' | 'title' | 'status';
+  sortOrder: 'asc' | 'desc';
+  onSortChange: (sortBy: 'created_at' | 'due_date' | 'priority' | 'title' | 'status', sortOrder: 'asc' | 'desc') => void;
 }) {
   const [query, setQuery] = useState('');
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const filtered = tasks.filter((t) => t.title.toLowerCase().includes(query.toLowerCase()));
+
+  const sortOptions = [
+    { value: 'created_at', label: 'Date Created' },
+    { value: 'due_date', label: 'Due Date' },
+    { value: 'priority', label: 'Priority' },
+    { value: 'title', label: 'Title' },
+    { value: 'status', label: 'Status' },
+  ] as const;
+
+  const currentSortLabel = sortOptions.find(opt => opt.value === sortBy)?.label || 'Date Created';
 
   return (
     <>
@@ -1450,23 +1905,107 @@ function TasksPage({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search tasks..."
-            className="w-full bg-transparent text-xs text-white outline-none placeholder:text-[#6f716f]"
+            disabled={loading}
+            className="w-full bg-transparent text-xs text-white outline-none placeholder:text-[#6f716f] disabled:opacity-50"
           />
         </div>
+        <div className="relative">
+          <button
+            onClick={() => setSortMenuOpen(!sortMenuOpen)}
+            disabled={loading}
+            className="flex h-9 items-center gap-2 whitespace-nowrap rounded-full border border-[#292b2d] bg-[#111214] px-3 text-xs text-[#a7a7a3] hover:border-[#555957] hover:text-white disabled:opacity-50"
+          >
+            <SlidersHorizontal size={14} />
+            {currentSortLabel} ({sortOrder === 'asc' ? '↑' : '↓'})
+            <ChevronDown size={14} />
+          </button>
+          {sortMenuOpen && (
+            <>
+              <div 
+                className="fixed inset-0 z-10" 
+                onClick={() => setSortMenuOpen(false)}
+              />
+              <div className="absolute right-0 top-10 z-20 w-48 rounded-xl border border-[#292b2d] bg-[#171819] py-1 shadow-2xl">
+                {sortOptions.map((option) => (
+                  <div key={option.value}>
+                    <button
+                      onClick={() => {
+                        onSortChange(option.value, sortBy === option.value && sortOrder === 'asc' ? 'desc' : 'asc');
+                        setSortMenuOpen(false);
+                      }}
+                      className={cn(
+                        'w-full px-3 py-2 text-left text-xs hover:bg-[#1d1f20]',
+                        sortBy === option.value ? 'text-[#b8ff3d]' : 'text-[#f5f5f2]'
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{option.label}</span>
+                        {sortBy === option.value && (
+                          <span className="text-[#b8ff3d]">
+                            {sortOrder === 'asc' ? '↑' : '↓'}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
-      {filtered.length > 0 ? (
+      
+      {loading ? (
+        <Surface>
+          <div className="flex items-center justify-center py-20">
+            <div className="text-center">
+              <div className="mb-4 inline-block h-8 w-8 animate-spin rounded-full border-2 border-[#b8ff3d] border-t-transparent"></div>
+              <p className="text-sm text-[#898b87]">Loading tasks...</p>
+            </div>
+          </div>
+        </Surface>
+      ) : error ? (
+        <Surface>
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+              <X size={23} />
+            </div>
+            <p className="text-base font-medium">Failed to load tasks</p>
+            <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">{error}</p>
+            <button 
+              onClick={onRetry}
+              className="mt-5 rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69]"
+            >
+              Retry
+            </button>
+          </div>
+        </Surface>
+      ) : filtered.length > 0 ? (
         <Surface className="p-0">
           {filtered.map((task) => (
             <TaskRow 
               key={task.id} 
               task={task} 
               projectName={getProjectNameForTask(task, projects)} 
-              onToast={onToast} 
+              onToast={onToast}
+              onUpdate={onRetry}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
           ))}
         </Surface>
+      ) : tasks.length === 0 ? (
+        <EmptyState 
+          title="No tasks yet" 
+          copy="Create your first task to get started." 
+          action={onCreate} 
+        />
       ) : (
-        <EmptyState title="No tasks found" copy="Try adjusting your search or create a new task." action={onCreate} />
+        <EmptyState 
+          title="No tasks found" 
+          copy="Try adjusting your search." 
+          action={onCreate} 
+        />
       )}
     </>
   );
@@ -1643,19 +2182,26 @@ function CommandPalette({
 function FormModal({ 
   kind, 
   projectId, 
+  projects,
+  taskToEdit,
   onClose, 
   onSuccess 
 }: { 
   kind: 'project' | 'task'; 
   projectId: string | null;
+  projects: Project[];
+  taskToEdit: Task | null;
   onClose: () => void; 
   onSuccess: () => void;
 }) {
+  const isEditing = !!taskToEdit;
+  
   // Project fields
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   
   // Task fields
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [title, setTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
   const [status, setStatus] = useState<TaskStatus>('todo');
@@ -1666,43 +2212,100 @@ function FormModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Pre-populate form when editing
+  useEffect(() => {
+    if (taskToEdit) {
+      setTitle(taskToEdit.title);
+      setTaskDescription(taskToEdit.description || '');
+      setStatus(taskToEdit.status);
+      setPriority(taskToEdit.priority);
+      setDueDate(taskToEdit.due_date ? taskToEdit.due_date.split('T')[0] : '');
+      setSelectedProjectId(taskToEdit.project_id);
+    }
+  }, [taskToEdit]);
+
+  // Determine the project ID to use for task creation
+  // If projectId is provided (from Project Detail), use it
+  // Otherwise (from Global Tasks), use the selected project
+  const effectiveProjectId = projectId || selectedProjectId;
+  
+  // Check if we need to show project selector (only when creating from global tasks)
+  const showProjectSelector = kind === 'task' && !projectId && !isEditing;
+
   // Validation
   const valid = kind === 'project' 
     ? name.trim().length > 0
-    : title.trim().length >= 3;
+    : title.trim().length >= 3 && (projectId || selectedProjectId || isEditing);
 
   const handleSubmit = async () => {
     if (!valid) return;
     
     if (kind === 'task') {
-      // Task creation
-      if (!projectId) {
-        setError('Project ID is required to create a task');
-        return;
-      }
+      // Task creation or editing
+      if (isEditing && taskToEdit) {
+        // EDIT MODE
+        try {
+          setLoading(true);
+          setError(null);
 
+          const updateData: any = {
+            title: title.trim(),
+            description: taskDescription.trim() || undefined,
+            status,
+            priority,
+            due_date: dueDate || null,
+          };
+
+          await updateTask(taskToEdit.id, updateData);
+          onSuccess();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to update task');
+          setLoading(false);
+        }
+      } else {
+        // CREATE MODE
+        if (!effectiveProjectId) {
+          setError('Project is required to create a task');
+          return;
+        }
+
+        try {
+          setLoading(true);
+          setError(null);
+
+          const taskData = {
+            project_id: effectiveProjectId,
+            title: title.trim(),
+            description: taskDescription.trim() || undefined,
+            status,
+            priority,
+            due_date: dueDate || null,
+          };
+
+          await createTask(effectiveProjectId, taskData);
+          onSuccess();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Failed to create task');
+          setLoading(false);
+        }
+      }
+    } else {
+      // Project creation
       try {
         setLoading(true);
         setError(null);
 
-        const taskData = {
-          project_id: projectId,
-          title: title.trim(),
-          description: taskDescription.trim() || undefined,
-          status,
-          priority,
-          due_date: dueDate || null,
+        const projectData = {
+          name: name.trim().substring(0, 255), // Max 255 chars
+          description: description.trim().substring(0, 1000) || undefined, // Max 1000 chars, optional
         };
 
-        await createTask(projectId, taskData);
+        await createProject(projectData);
         onSuccess();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create task');
+        setError(err instanceof Error ? err.message : 'Failed to create project');
         setLoading(false);
       }
-    } else {
-      // Project creation - placeholder for future implementation
-      onSuccess();
     }
   };
 
@@ -1710,7 +2313,7 @@ function FormModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4" onMouseDown={onClose}>
       <div className="w-full max-w-[520px] rounded-2xl border border-[#292b2d] bg-[#111214] p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Create {kind}</h2>
+          <h2 className="text-xl font-semibold">{isEditing ? 'Edit' : 'Create'} {kind}</h2>
           <button onClick={onClose} className="rounded-full p-1 text-[#898b87] hover:bg-[#1d1f20] hover:text-white">
             <X size={18} />
           </button>
@@ -1726,12 +2329,16 @@ function FormModal({
           {kind === 'project' ? (
             <>
               <div>
-                <label className="block text-sm font-medium text-[#f5f5f2]">Name</label>
+                <label className="block text-sm font-medium text-[#f5f5f2]">
+                  Name <span className="text-[#ff9b7d]">*</span>
+                </label>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Project name"
-                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f]"
+                  disabled={loading}
+                  maxLength={255}
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f] disabled:opacity-50"
                 />
               </div>
               <div>
@@ -1741,12 +2348,40 @@ function FormModal({
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Add a description..."
                   rows={3}
-                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f]"
+                  disabled={loading}
+                  maxLength={1000}
+                  className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] placeholder:text-[#6f716f] disabled:opacity-50"
                 />
               </div>
             </>
           ) : (
             <>
+              {showProjectSelector && (
+                <div>
+                  <label className="block text-sm font-medium text-[#f5f5f2]">
+                    Project <span className="text-[#ff9b7d]">*</span>
+                  </label>
+                  {projects.length === 0 ? (
+                    <div className="mt-2 rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-[#898b87]">
+                      No projects available. Create a project first.
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedProjectId}
+                      onChange={(e) => setSelectedProjectId(e.target.value)}
+                      disabled={loading}
+                      className="mt-2 w-full rounded-xl border border-[#292b2d] bg-[#1d1f20] px-4 py-2.5 text-sm text-white outline-none focus:border-[#b8ff3d] disabled:opacity-50"
+                    >
+                      <option value="">Select a project...</option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-[#f5f5f2]">
                   Title <span className="text-[#ff9b7d]">*</span>
@@ -1825,6 +2460,112 @@ function FormModal({
             className="rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69] disabled:opacity-50"
           >
             {loading ? 'Creating...' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteConfirmModal({
+  taskTitle,
+  onCancel,
+  onConfirm,
+}: {
+  taskTitle: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleConfirm = async () => {
+    setDeleting(true);
+    await onConfirm();
+    setDeleting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4" onMouseDown={onCancel}>
+      <div className="w-full max-w-[440px] rounded-2xl border border-[#292b2d] bg-[#111214] p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+          <X size={22} />
+        </div>
+        <h2 className="text-xl font-semibold">Delete task</h2>
+        <p className="mt-2 text-sm text-[#898b87]">
+          Are you sure you want to delete <span className="font-medium text-[#f5f5f2]">"{taskTitle}"</span>? This action cannot be undone.
+        </p>
+        <div className="mt-6 flex justify-end gap-2">
+          <button 
+            onClick={onCancel} 
+            disabled={deleting}
+            className="rounded-full border border-[#292b2d] px-4 py-2.5 text-xs font-semibold text-[#f5f5f2] hover:bg-[#1d1f20] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={deleting}
+            className="rounded-full bg-[#ff9b7d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#ffab97] disabled:opacity-50"
+          >
+            {deleting ? 'Deleting...' : 'Delete task'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteProjectConfirmModal({
+  projectName,
+  taskCount,
+  onCancel,
+  onConfirm,
+}: {
+  projectName: string;
+  taskCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+
+  const handleConfirm = async () => {
+    setDeleting(true);
+    await onConfirm();
+    setDeleting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4" onMouseDown={onCancel}>
+      <div className="w-full max-w-[480px] rounded-2xl border border-[#292b2d] bg-[#111214] p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+          <X size={22} />
+        </div>
+        <h2 className="text-xl font-semibold">Delete project</h2>
+        <p className="mt-2 text-sm text-[#898b87]">
+          Are you sure you want to delete <span className="font-medium text-[#f5f5f2]">"{projectName}"</span>?
+        </p>
+        {taskCount > 0 && (
+          <div className="mt-3 rounded-xl border border-[#ff9b7d]/20 bg-[#3c251f]/30 px-4 py-3">
+            <p className="text-xs text-[#ff9b7d]">
+              ⚠️ This will also permanently delete <span className="font-semibold">{taskCount} {taskCount === 1 ? 'task' : 'tasks'}</span> belonging to this project.
+            </p>
+          </div>
+        )}
+        <p className="mt-3 text-xs text-[#6f716f]">This action cannot be undone.</p>
+        <div className="mt-6 flex justify-end gap-2">
+          <button 
+            onClick={onCancel} 
+            disabled={deleting}
+            className="rounded-full border border-[#292b2d] px-4 py-2.5 text-xs font-semibold text-[#f5f5f2] hover:bg-[#1d1f20] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={deleting}
+            className="rounded-full bg-[#ff9b7d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#ffab97] disabled:opacity-50"
+          >
+            {deleting ? 'Deleting...' : 'Delete project'}
           </button>
         </div>
       </div>

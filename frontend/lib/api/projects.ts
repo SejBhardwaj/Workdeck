@@ -32,9 +32,9 @@ export async function getProjects(
 export async function getProject(
   id: string
 ): Promise<ProjectResponse> {
-  return apiClient.get<ProjectResponse>(
-    `/projects/${encodeURIComponent(id)}`
-  );
+  const url = `/projects/${encodeURIComponent(id)}`;
+  console.log('getProject API call:', { id, url, idLength: id.length });
+  return apiClient.get<ProjectResponse>(url);
 }
 
 export async function createProject(

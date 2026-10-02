@@ -21,7 +21,10 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const fullUrl = `${API_BASE_URL}${endpoint}`;
+  console.log('API Request:', { method: options.method || 'GET', fullUrl, endpoint });
+  
+  const response = await fetch(fullUrl, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -46,6 +49,7 @@ async function request<T>(
         ? data.message
         : `Request failed with status ${response.status}`;
 
+    console.error('API Error:', { fullUrl, status: response.status, message, data });
     throw new ApiError(message, response.status, data);
   }
 
