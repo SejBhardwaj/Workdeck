@@ -66,6 +66,11 @@ export function DataTaskerApp() {
   const [taskSortBy, setTaskSortBy] = useState<'created_at' | 'due_date' | 'priority' | 'title' | 'status'>('created_at');
   const [taskSortOrder, setTaskSortOrder] = useState<'asc' | 'desc'>('desc');
   
+  // Filter state for global tasks
+  const [taskFilterStatus, setTaskFilterStatus] = useState<'todo' | 'in-progress' | 'done' | 'All'>('All');
+  const [taskFilterPriority, setTaskFilterPriority] = useState<'low' | 'medium' | 'high' | 'All'>('All');
+  const [taskFilterProject, setTaskFilterProject] = useState<string | 'All'>('All');
+  
   // API state for projects
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
@@ -128,6 +133,9 @@ export function DataTaskerApp() {
         setTasksLoading(true);
         setTasksError(null);
         const response = await getAllTasks({
+          status: taskFilterStatus !== 'All' ? taskFilterStatus : undefined,
+          priority: taskFilterPriority !== 'All' ? taskFilterPriority : undefined,
+          project_id: taskFilterProject !== 'All' ? taskFilterProject : undefined,
           sortBy: taskSortBy,
           sortOrder: taskSortOrder,
         });
@@ -153,7 +161,7 @@ export function DataTaskerApp() {
     return () => {
       mounted = false;
     };
-  }, [taskSortBy, taskSortOrder]);
+  }, [taskSortBy, taskSortOrder, taskFilterStatus, taskFilterPriority, taskFilterProject]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -376,7 +384,16 @@ export function DataTaskerApp() {
               refreshTrigger={taskRefreshTrigger}
             />
           ) : pathname === '/' ? (
-            <Dashboard projects={projects} tasks={tasks} onCreate={() => setModal('project')} />
+            <Dashboard 
+              projects={projects} 
+              tasks={tasks} 
+              loading={projectsLoading || tasksLoading}
+              error={projectsError || tasksError}
+              onRetry={() => {
+                window.location.reload();
+              }}
+              onCreate={() => setModal('project')} 
+            />
           ) : pathname === '/projects' ? (
             <Projects 
               projects={projects} 
@@ -417,6 +434,9 @@ export function DataTaskerApp() {
                 setTasksLoading(true);
                 setTasksError(null);
                 getAllTasks({
+                  status: taskFilterStatus !== 'All' ? taskFilterStatus : undefined,
+                  priority: taskFilterPriority !== 'All' ? taskFilterPriority : undefined,
+                  project_id: taskFilterProject !== 'All' ? taskFilterProject : undefined,
                   sortBy: taskSortBy,
                   sortOrder: taskSortOrder,
                 })
@@ -449,6 +469,12 @@ export function DataTaskerApp() {
                 setTaskSortBy(sortBy);
                 setTaskSortOrder(sortOrder);
               }}
+              filterStatus={taskFilterStatus}
+              filterPriority={taskFilterPriority}
+              filterProject={taskFilterProject}
+              onFilterStatusChange={setTaskFilterStatus}
+              onFilterPriorityChange={setTaskFilterPriority}
+              onFilterProjectChange={setTaskFilterProject}
             />
           ) : pathname === '/analytics' ? (
             <Analytics projects={projects} tasks={tasks} />
@@ -738,16 +764,110 @@ function PriorityBadge({ priority }: { priority: TaskPriority }) {
 // DASHBOARD PAGE
 // ============================================
 
-function Dashboard({ projects, tasks, onCreate }: { projects: Project[]; tasks: Task[]; onCreate: () => void }) {
+function Dashboard({ 
+  projects, 
+  tasks, 
+  loading, 
+  error, 
+  onRetry, 
+  onCreate 
+}: { 
+  projects: Project[]; 
+  tasks: Task[]; 
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  onCreate: () => void;
+}) {
   const stats = getWorkspaceStats(projects, tasks);
   const projectsWithStats = enrichProjectsWithStats(projects, tasks);
   const upcomingTasks = getUpcomingTasks(tasks).slice(0, 4);
+  
+  // Dynamic greeting based on time of day
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  
+  // Dynamic date
+  const today = new Date();
+  const dayOfWeek = today.toLocaleDateString('en-US', { weekday: 'long' });
+  const month = today.toLocaleDateString('en-US', { month: 'long' });
+  const day = today.getDate();
+  const eyebrowDate = `${dayOfWeek}, ${month} ${day}`;
+  
+  // Show loading state
+  if (loading) {
+    return (
+      <>
+        <PageHeading
+          eyebrow={eyebrowDate}
+          title={`${greeting}, Sejal`}
+          copy="Here's what's happening across your workspace."
+          action={
+            <button
+              onClick={onCreate}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#b8ff3d] px-5 text-sm font-semibold text-[#0a0a0a] shadow-[0_0_25px_rgba(184,255,61,.12)] transition hover:scale-[1.02] hover:bg-[#c9ff69]"
+            >
+              <Plus size={17} />
+              Create
+            </button>
+          }
+        />
+        <Surface>
+          <div className="flex items-center justify-center py-20">
+            <div className="text-center">
+              <div className="mb-4 inline-block h-8 w-8 animate-spin rounded-full border-2 border-[#b8ff3d] border-t-transparent"></div>
+              <p className="text-sm text-[#898b87]">Loading dashboard...</p>
+            </div>
+          </div>
+        </Surface>
+      </>
+    );
+  }
+  
+  // Show error state
+  if (error) {
+    return (
+      <>
+        <PageHeading
+          eyebrow={eyebrowDate}
+          title={`${greeting}, Sejal`}
+          copy="Here's what's happening across your workspace."
+          action={
+            <button
+              onClick={onCreate}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#b8ff3d] px-5 text-sm font-semibold text-[#0a0a0a] shadow-[0_0_25px_rgba(184,255,61,.12)] transition hover:scale-[1.02] hover:bg-[#c9ff69]"
+            >
+              <Plus size={17} />
+              Create
+            </button>
+          }
+        />
+        <Surface>
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#ff9b7d]/30 bg-[#3c251f] text-[#ff9b7d]">
+              <X size={23} />
+            </div>
+            <p className="text-base font-medium">Failed to load dashboard</p>
+            <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">{error}</p>
+            {onRetry && (
+              <button 
+                onClick={onRetry}
+                className="mt-5 rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69]"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        </Surface>
+      </>
+    );
+  }
 
   return (
     <>
       <PageHeading
-        eyebrow="Monday, April 14"
-        title="Good morning, Sejal"
+        eyebrow={eyebrowDate}
+        title={`${greeting}, Sejal`}
         copy="Here's what's happening across your workspace."
         action={
           <button
@@ -763,13 +883,29 @@ function Dashboard({ projects, tasks, onCreate }: { projects: Project[]; tasks: 
         <Stat
           label="Total projects"
           value={String(stats.totalProjects).padStart(2, '0')}
-          change="+2 this month"
+          change={stats.totalProjects === 1 ? '1 project' : `${stats.totalProjects} projects`}
           icon={FolderKanban}
           accent
         />
-        <Stat label="Total tasks" value={String(stats.totalTasks)} change="+12% from last month" icon={Target} />
-        <Stat label="In progress" value={String(stats.inProgressTasks)} change="6 due this week" icon={Zap} />
-        <Stat label="Completed" value={String(stats.completedTasks)} change="+18% from last month" icon={Check} accent />
+        <Stat 
+          label="Total tasks" 
+          value={String(stats.totalTasks)} 
+          change={`${stats.completionRate}% completed`}
+          icon={Target} 
+        />
+        <Stat 
+          label="In progress" 
+          value={String(stats.inProgressTasks)} 
+          change={`${stats.todoTasks} to do`}
+          icon={Zap} 
+        />
+        <Stat 
+          label="Completed" 
+          value={String(stats.completedTasks)} 
+          change={stats.overdueTasks > 0 ? `${stats.overdueTasks} overdue` : 'All on track'}
+          icon={Check} 
+          accent 
+        />
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
         <Productivity />
@@ -881,7 +1017,7 @@ function StatusDistribution({ tasks }: { tasks: Task[] }) {
       </div>
       <div className="mt-8 flex items-center justify-between rounded-[24px] bg-[#2a2a2a] p-4 text-xs">
         <span className="text-[#898b87]">Completion rate</span>
-        <span className="font-medium text-[#b8ff3d]">+12.4%</span>
+        <span className="font-medium text-[#b8ff3d]">{donePercentage}%</span>
       </div>
     </Surface>
   );
@@ -1855,6 +1991,12 @@ function TasksPage({
   sortBy,
   sortOrder,
   onSortChange,
+  filterStatus,
+  filterPriority,
+  filterProject,
+  onFilterStatusChange,
+  onFilterPriorityChange,
+  onFilterProjectChange,
 }: {
   projects: Project[];
   tasks: Task[];
@@ -1868,6 +2010,12 @@ function TasksPage({
   sortBy: 'created_at' | 'due_date' | 'priority' | 'title' | 'status';
   sortOrder: 'asc' | 'desc';
   onSortChange: (sortBy: 'created_at' | 'due_date' | 'priority' | 'title' | 'status', sortOrder: 'asc' | 'desc') => void;
+  filterStatus: 'todo' | 'in-progress' | 'done' | 'All';
+  filterPriority: 'low' | 'medium' | 'high' | 'All';
+  filterProject: string | 'All';
+  onFilterStatusChange: (status: 'todo' | 'in-progress' | 'done' | 'All') => void;
+  onFilterPriorityChange: (priority: 'low' | 'medium' | 'high' | 'All') => void;
+  onFilterProjectChange: (projectId: string | 'All') => void;
 }) {
   const [query, setQuery] = useState('');
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
@@ -1882,6 +2030,14 @@ function TasksPage({
   ] as const;
 
   const currentSortLabel = sortOptions.find(opt => opt.value === sortBy)?.label || 'Date Created';
+  
+  const hasActiveFilters = filterStatus !== 'All' || filterPriority !== 'All' || filterProject !== 'All';
+  
+  const clearFilters = () => {
+    onFilterStatusChange('All');
+    onFilterPriorityChange('All');
+    onFilterProjectChange('All');
+  };
 
   return (
     <>
@@ -1955,6 +2111,74 @@ function TasksPage({
         </div>
       </div>
       
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[#898b87]">Status:</span>
+          {(['All', 'todo', 'in-progress', 'done'] as const).map((status) => (
+            <button
+              key={status}
+              onClick={() => onFilterStatusChange(status)}
+              disabled={loading}
+              className={cn(
+                'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50',
+                filterStatus === status
+                  ? 'border-[#b8ff3d] bg-[#b8ff3d]/10 text-[#b8ff3d]'
+                  : 'border-[#292b2d] bg-[#111214] text-[#a7a7a3] hover:border-[#555957] hover:text-white'
+              )}
+            >
+              {status === 'All' ? 'All' : status === 'todo' ? 'To Do' : status === 'in-progress' ? 'In Progress' : 'Done'}
+            </button>
+          ))}
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[#898b87]">Priority:</span>
+          {(['All', 'low', 'medium', 'high'] as const).map((priority) => (
+            <button
+              key={priority}
+              onClick={() => onFilterPriorityChange(priority)}
+              disabled={loading}
+              className={cn(
+                'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50',
+                filterPriority === priority
+                  ? 'border-[#b8ff3d] bg-[#b8ff3d]/10 text-[#b8ff3d]'
+                  : 'border-[#292b2d] bg-[#111214] text-[#a7a7a3] hover:border-[#555957] hover:text-white'
+              )}
+            >
+              {priority === 'All' ? 'All' : priority.charAt(0).toUpperCase() + priority.slice(1)}
+            </button>
+          ))}
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[#898b87]">Project:</span>
+          <select
+            value={filterProject}
+            onChange={(e) => onFilterProjectChange(e.target.value)}
+            disabled={loading}
+            className="rounded-full border border-[#292b2d] bg-[#111214] px-3 py-1.5 text-xs font-medium text-[#a7a7a3] outline-none transition-colors hover:border-[#555957] hover:text-white disabled:opacity-50"
+          >
+            <option value="All">All Projects</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        {hasActiveFilters && (
+          <button
+            onClick={clearFilters}
+            disabled={loading}
+            className="ml-auto flex items-center gap-1.5 rounded-full border border-[#292b2d] bg-[#111214] px-3 py-1.5 text-xs font-medium text-[#a7a7a3] transition-colors hover:border-[#555957] hover:text-white disabled:opacity-50"
+          >
+            <X size={12} />
+            Clear Filters
+          </button>
+        )}
+      </div>
+      
       {loading ? (
         <Surface>
           <div className="flex items-center justify-center py-20">
@@ -1994,18 +2218,38 @@ function TasksPage({
             />
           ))}
         </Surface>
-      ) : tasks.length === 0 ? (
+      ) : tasks.length === 0 && !hasActiveFilters ? (
         <EmptyState 
           title="No tasks yet" 
           copy="Create your first task to get started." 
           action={onCreate} 
         />
+      ) : tasks.length === 0 && hasActiveFilters ? (
+        <Surface>
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#b8ff3d]/30 bg-[#b8ff3d]/10 text-[#b8ff3d]">
+              <Target size={23} />
+            </div>
+            <p className="text-base font-medium">No tasks match your filters</p>
+            <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">Try adjusting or clearing your filters.</p>
+            <button 
+              onClick={clearFilters}
+              className="mt-5 rounded-full bg-[#b8ff3d] px-4 py-2.5 text-xs font-semibold text-[#0a0a0a] hover:bg-[#c9ff69]"
+            >
+              Clear Filters
+            </button>
+          </div>
+        </Surface>
       ) : (
-        <EmptyState 
-          title="No tasks found" 
-          copy="Try adjusting your search." 
-          action={onCreate} 
-        />
+        <Surface>
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#b8ff3d]/30 bg-[#b8ff3d]/10 text-[#b8ff3d]">
+              <Target size={23} />
+            </div>
+            <p className="text-base font-medium">No tasks found</p>
+            <p className="mt-2 max-w-sm text-xs leading-5 text-[#898b87]">Try adjusting your search.</p>
+          </div>
+        </Surface>
       )}
     </>
   );
