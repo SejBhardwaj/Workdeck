@@ -33,7 +33,6 @@ export async function getProject(
   id: string
 ): Promise<ProjectResponse> {
   const url = `/projects/${encodeURIComponent(id)}`;
-  console.log('getProject API call:', { id, url, idLength: id.length });
   return apiClient.get<ProjectResponse>(url);
 }
 

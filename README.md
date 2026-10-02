@@ -1,4 +1,4 @@
-# DataTasker
+# WorkDeck
 
 A modern task and project management application with a beautiful UI.
 

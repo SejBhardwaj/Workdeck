@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import {
   Activity, ArrowUpRight, Bell, CalendarDays, Check, ChevronDown, ChevronLeft,
   ChevronRight, Clock3, Command, FolderKanban, Grid2X2, LayoutDashboard,
@@ -11,17 +12,11 @@ import {
 
 // Import new types and data
 import { Project, Task, TaskStatus, TaskPriority } from '@/types';
-import { mockProjects, mockTasks } from '@/lib/mock';
 import { getProjects, getProject, createProject, updateProject, deleteProject } from '@/lib/api/projects';
 import { getTasks, createTask, getAllTasks, updateTask, deleteTask } from '@/lib/api/tasks';
 import {
   enrichProjectsWithStats,
-  getProjectById,
   getProjectTone,
-  getTasksForProject,
-  getProjectProgress,
-  getProjectTaskCount,
-  getCompletedTaskCount,
 } from '@/lib/project-utils';
 import {
   enrichTasksWithProject,
@@ -47,7 +42,7 @@ function cn(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(' ');
 }
 
-export function DataTaskerApp() {
+export function WorkDeckApp() {
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -192,13 +187,18 @@ export function DataTaskerApp() {
         )}
       >
         {/* Logo */}
-        <div className={cn('mb-9 flex items-center gap-3 px-2', collapsed && 'lg:justify-center lg:px-0')}>
-          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[13px] bg-[#b8ff3d] text-[#0a0a0a] shadow-[0_0_24px_rgba(184,255,61,.18)]">
-            <span className="absolute h-5 w-5 rotate-45 rounded-[5px] border-[3px] border-[#0a0a0a]" />
-            <span className="relative h-2 w-2 rounded-full bg-[#0a0a0a]" />
+        <div className={cn('mb-9 flex items-center gap-2 px-2', collapsed && 'lg:justify-center lg:px-0')}>
+          <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden">
+            <Image 
+              src="/logo.png" 
+              alt="WorkDeck Logo" 
+              width={48} 
+              height={48}
+              className="object-contain"
+            />
           </div>
           <span className={cn('text-[17px] font-semibold tracking-[-.04em]', collapsed && 'lg:hidden')}>
-            DataTasker
+            WorkDeck
           </span>
           <button
             className="ml-auto rounded-full p-1 text-[#898b87] hover:bg-[#1d1f20] hover:text-white lg:hidden"
@@ -1516,14 +1516,6 @@ function ProjectDetail({
   const rawProjectId = pathname.split('/projects/')[1];
   const projectId = rawProjectId ? rawProjectId.split('/')[0].trim() : '';
   
-  // Debug logging
-  console.log('ProjectDetail Debug:', {
-    pathname,
-    rawProjectId,
-    projectId,
-    projectIdLength: projectId.length
-  });
-  
   const [project, setProject] = useState<Project | null>(null);
   const [projectLoading, setProjectLoading] = useState(true);
   const [projectError, setProjectError] = useState<string | null>(null);
@@ -2397,7 +2389,7 @@ function SettingsPage() {
         <Surface>
           <div className="mb-6">
             <p className="text-base font-medium">Appearance</p>
-            <p className="mt-1 text-xs text-[#898b87]">Customize how DataTasker looks</p>
+            <p className="mt-1 text-xs text-[#898b87]">Customize how WorkDeck looks</p>
           </div>
           <div className="space-y-5">
             <div>

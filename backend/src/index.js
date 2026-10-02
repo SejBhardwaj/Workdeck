@@ -35,7 +35,7 @@ if (process.env.NODE_ENV === 'development') {
 app.get('/health', (req, res) => {
   res.json({
     success: true,
-    message: 'DataTasker API is running',
+    message: 'WorkDeck API is running',
     timestamp: new Date().toISOString(),
   });
 });
@@ -60,7 +60,7 @@ const startServer = async () => {
     // Start server
     app.listen(PORT, () => {
       console.log('='.repeat(50));
-      console.log('DataTasker Backend API');
+      console.log('WorkDeck Backend API');
       console.log('='.repeat(50));
       console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`Server running on: http://localhost:${PORT}`);

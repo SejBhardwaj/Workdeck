@@ -1,7 +1,7 @@
 {
-  "name": "datatasker-backend",
+  "name": "workdeck-backend",
   "version": "1.0.0",
-  "description": "DataTasker backend API with Express and SQLite",
+  "description": "WorkDeck backend API with Express and PostgreSQL",
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {

@@ -1,7 +1,7 @@
 'use client';
 
-import { DataTaskerApp } from '@/components/datasker';
+import { WorkDeckApp } from '@/components/datasker';
 
 export default function Home() {
-  return <DataTaskerApp />;
+  return <WorkDeckApp />;
 }

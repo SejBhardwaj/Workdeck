@@ -22,7 +22,6 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const fullUrl = `${API_BASE_URL}${endpoint}`;
-  console.log('API Request:', { method: options.method || 'GET', fullUrl, endpoint });
   
   const response = await fetch(fullUrl, {
     ...options,
